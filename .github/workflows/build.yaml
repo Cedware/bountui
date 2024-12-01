@@ -20,3 +20,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         run: cargo build --release
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: bountui-${{ matrix.os }}
+          path: target/release
