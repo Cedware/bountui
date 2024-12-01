@@ -58,5 +58,7 @@ jobs:
       - name: Upload Release Assets
         run: |
           for file in ./artifacts/*; do
-            gh release upload ${{ github.event.release.tag_name }} "$file" --clobber
+            zip_name=$(basename "$file").zip
+            zip -rj $zip_name $file
+            gh release upload ${{ github.event.release.tag_name }} "$zip_name" --clobber
           done
