@@ -24,7 +24,6 @@ jobs:
           - runner: macos-latest
             binary: bountui
             target: x86_64-apple-darwin
-            name: Build ${{ matrix.os }}
           - runner: macos-latest
             binary: bountui
             target: aarch64-apple-darwin
