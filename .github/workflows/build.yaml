@@ -57,6 +57,6 @@ jobs:
           path: ./artifacts
       - name: Upload Release Assets
         run: |
-          for file in ${{ steps.download_artifacts.outputs.path }}/*; do
+          for file in ./artifacts/*; do
             gh release upload ${{ github.event.release.tag_name }} "$file" --clobber
           done
