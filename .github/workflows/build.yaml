@@ -3,6 +3,9 @@ on:
   pull_request:
     branches:
       - development
+      - main
+  release:
+    types: [created]
   workflow_dispatch:
 env:
   CARGO_TERM_COLOR: always
@@ -12,19 +15,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - runner: windows-latest
             binary: bountui.exe
-          - os: ubuntu-latest
+            target: x86_64-pc-windows-gnu
+          - runner: ubuntu-latest
             binary: bountui
-          - os: macos-latest
+            target: x86_64-unknown-linux-musl
+          - runner: macos-latest
             binary: bountui
-    runs-on: ${{ matrix.os }}
+            target: x86_64-apple-darwin
+            name: Build ${{ matrix.os }}
+          - runner: macos-latest
+            binary: bountui
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        run: cargo build --release
+        run: cargo build --target ${{ matrix.target }} --release
       - name: Upload artifact
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: bountui-${{ matrix.os }}
+          name: bountui-${{ github.event.release.tag_name }}-${{ matrix.target }}
           path: target/release/${{ matrix.binary }}
