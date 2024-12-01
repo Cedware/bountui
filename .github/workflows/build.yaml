@@ -1,0 +1,60 @@
+name: Build
+on:
+  pull_request:
+    branches:
+      - development
+      - main
+  release:
+    types: [created]
+  workflow_dispatch:
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            binary: bountui.exe
+            target: x86_64-pc-windows-gnu
+          - runner: ubuntu-latest
+            binary: bountui
+            target: x86_64-unknown-linux-musl
+          - runner: macos-latest
+            binary: bountui
+            target: x86_64-apple-darwin
+          - runner: macos-latest
+            binary: bountui
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Install target
+        run: rustup target add ${{ matrix.target }}
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --target ${{ matrix.target }} --release
+      - name: Upload artifact
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bountui-${{ github.event.release.tag_name }}-${{ matrix.target }}
+          path: target/release/${{ matrix.binary }}
+  add_release_assets:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+      - name: Install GitHub CLI
+        run: sudo apt-get install gh
+      - name: Authenticate GitHub CLI
+        run: echo ${{ secrets.GITHUB_TOKEN }} | gh auth login --with-token
+      - name: Upload Release Assets
+        run: |
+          for file in ./artifacts/*; do
+            gh release upload ${{ github.event.release.tag_name }} "$file" --clobber
+          done
+        if: github.event_name == 'release'
