@@ -19,6 +19,22 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@v2
+      - name: Install osxcross
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang llvm
+          git clone https://github.com/tpoechtrager/osxcross.git
+          cd osxcross
+          wget https://github.com/tpoechtrager/osxcross/releases/download/v0.1/tarballs.tar.xz
+          tar -xf tarballs.tar.xz
+          UNATTENDED=yes OSX_VERSION_MIN=10.7 ./build.sh
+          echo "::add-path::$(pwd)/target/bin"
+      - name: Set up osxcross environment
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          echo "CC=o64-clang" >> $GITHUB_ENV
+          echo "CXX=o64-clang++" >> $GITHUB_ENV
       - name: Compile
         id: compile
         uses: rust-build/rust-build.action@v1.4.5
