@@ -13,8 +13,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
+            binary: bountui.exe
           - os: ubuntu-latest
+            binary: bountui
           - os: macos-latest
+            binary: bountui
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -24,4 +27,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bountui-${{ matrix.os }}
-          path: target/release
+          path: target/release/${{ matrix.binary }}
