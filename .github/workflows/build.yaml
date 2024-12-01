@@ -6,35 +6,21 @@ on:
   workflow_dispatch:
 jobs:
   build:
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-pc-windows-gnu
             archive: zip
+            runner: windows-latest
           - target: x86_64-unknown-linux-musl
             archive: tar.gz tar.xz tar.zst
+            runner: ubuntu-latest
           - target: x86_64-apple-darwin
             archive: zip
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v2
-      - name: Install osxcross
-        if: matrix.target == 'x86_64-apple-darwin'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake clang llvm
-          git clone https://github.com/tpoechtrager/osxcross.git
-          cd osxcross
-          wget https://github.com/tpoechtrager/osxcross/releases/download/v0.1/tarballs.tar.xz
-          tar -xf tarballs.tar.xz
-          UNATTENDED=yes OSX_VERSION_MIN=10.7 ./build.sh
-          echo "::add-path::$(pwd)/target/bin"
-      - name: Set up osxcross environment
-        if: matrix.target == 'x86_64-apple-darwin'
-        run: |
-          echo "CC=o64-clang" >> $GITHUB_ENV
-          echo "CXX=o64-clang++" >> $GITHUB_ENV
       - name: Compile
         id: compile
         uses: rust-build/rust-build.action@v1.4.5
