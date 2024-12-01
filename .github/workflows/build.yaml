@@ -29,6 +29,8 @@ jobs:
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Install target
+        run: rustup target add ${{ matrix.target }}
       - uses: actions/checkout@v4
       - name: Build
         run: cargo build --target ${{ matrix.target }} --release
