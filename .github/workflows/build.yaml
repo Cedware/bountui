@@ -4,6 +4,8 @@ on:
     branches:
       - development
   workflow_dispatch:
+env:
+  CARGO_TERM_COLOR: always
 jobs:
   build:
     strategy:
@@ -21,16 +23,13 @@ jobs:
             runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Compile
-        id: compile
-        uses: rust-build/rust-build.action@v1.4.5
-        with:
-          RUSTTARGET: ${{ matrix.target }}
-          ARCHIVE_TYPES: ${{ matrix.archive }}
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: Binary
-          path: |
-            ${{ steps.compile.outputs.BUILT_ARCHIVE }}
-            ${{ steps.compile.outputs.BUILT_CHECKSUM }}
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --release
+#      - name: Upload artifact
+#        uses: actions/upload-artifact@v3
+#        with:
+#          name: Binary
+#          path: |
+#            ${{ steps.compile.outputs.BUILT_ARCHIVE }}
+#            ${{ steps.compile.outputs.BUILT_CHECKSUM }}
