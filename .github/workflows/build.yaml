@@ -39,7 +39,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bountui-${{ github.event.release.tag_name }}-${{ matrix.target }}
-          path: target/release/${{ matrix.binary }}
+          path: target/${{ matrix.target }}/release/${{ matrix.binary }}
   add_release_assets:
     needs: build
     runs-on: ubuntu-latest
