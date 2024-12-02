@@ -22,7 +22,10 @@ fn run_blocking() -> io::Result<()> {
     let client = boundary::CliClient::default();
     let auth_result = tokio::runtime::Handle::current().block_on(client.authenticate());
     let user_id = match auth_result {
-        Ok(auth) => auth.attributes.user_id,
+        Ok(auth) => {
+            std::env::set_var("BOUNDARY_TOKEN", &auth.attributes.token);
+            auth.attributes.user_id
+        },
         Err(e) => {
             eprintln!("Failed to authenticate: {}", e);
             return Ok(());
