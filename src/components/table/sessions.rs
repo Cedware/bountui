@@ -154,6 +154,9 @@ impl<'a, C> SessionsPage<'a, C> {
     where
         C: boundary::ApiClient,
     {
+        if self.table_page.handle_event(event) {
+            return true;
+        }
         if let Event::Key(key_event) = event {
             if key_event.code == crossterm::event::KeyCode::Char('d')
                 && key_event.modifiers == crossterm::event::KeyModifiers::CONTROL
@@ -162,7 +165,7 @@ impl<'a, C> SessionsPage<'a, C> {
                 return true;
             }
         }
-        self.table_page.handle_event(event)
+        false
     }
 
     pub(crate) fn render(&self, frame: &mut Frame) {
