@@ -52,7 +52,6 @@ jobs:
           node-version: 20.9.0
       - name: Npm install
         run: npm install
-      - uses: actions/checkout@v4
       - name: Download all artifacts
         id: download_artifacts
         uses: actions/download-artifact@v4
