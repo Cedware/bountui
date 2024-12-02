@@ -136,6 +136,9 @@ where
     }
 
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        if self.table_page.handle_event(event) {
+            return true;
+        }
         if let Event::Key(key_event) = event {
             match key_event.code {
                 crossterm::event::KeyCode::Char('s') => {
@@ -149,7 +152,7 @@ where
                 _ => {}
             }
         }
-        self.table_page.handle_event(event)
+        false
     }
 
     pub fn render(&self, frame: &mut Frame) {
