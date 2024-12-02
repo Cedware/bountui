@@ -194,6 +194,10 @@ impl<'a, C> TargetsPage<'a, C> {
             return true;
         }
 
+        if self.table_page.handle_event(event) {
+            return true;
+        }
+
         if let Event::Key(key_event) = event {
             match key_event.code {
                 KeyCode::Char('C') => {
@@ -213,9 +217,6 @@ impl<'a, C> TargetsPage<'a, C> {
             }
         }
 
-        if self.table_page.handle_event(event) {
-            return true;
-        }
         false
     }
 

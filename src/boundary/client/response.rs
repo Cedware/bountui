@@ -29,4 +29,5 @@ pub struct AuthenticateResponse {
 #[derive(Deserialize, Debug)]
 pub struct AuthenticateAttributes {
     pub user_id: String,
+    pub token: String
 }
