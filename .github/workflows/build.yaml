@@ -1,4 +1,6 @@
 name: Build
+permissions:
+  contents: write
 on:
   pull_request:
     branches:
@@ -31,8 +33,6 @@ jobs:
       - name: Install target
         run: rustup target add ${{ matrix.target }}
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - name: Build
         run: cargo build --target ${{ matrix.target }} --release
       - name: Upload artifact
@@ -47,8 +47,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@v4.1.0
         with:
           node-version: 20.9.0
@@ -70,4 +68,4 @@ jobs:
         id: semantic_release
         uses: cycjimmy/semantic-release-action@v4
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
