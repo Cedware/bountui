@@ -38,7 +38,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bountui-${{ github.event.release.tag_name }}-${{ matrix.target }}
+          name: bountui-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           retention-days: 1
   release:
@@ -57,10 +57,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
+      - name: Get Version
+        id: get_version
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Zip artifacts
         run: |
           for file in ./artifacts/*; do
             zip_name=$(basename "$file").zip
+            zip_name=${zip_name/bountui/bountui-${{ steps.get_version.outputs.new_release_version }}}
             zip -rj $zip_name $file
           done
       - name: Semantic Release
