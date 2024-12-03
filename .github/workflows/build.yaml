@@ -86,6 +86,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: source_repo
+      - name: Install pkgbuild-introspection
+        run: sudo apt-get update && sudo apt-get install -y pkgbuild-introspection
       - name: Publish to AUR
         run: |
           mkdir -p ~/.ssh
@@ -111,6 +113,10 @@ jobs:
           sed -i "s|source=.*|source=(\"$src_tarball_url\")|" aur/PKGBUILD
           sed -i "s/sha256sums=.*/sha256sums=(\"$checksum\")/" aur/PKGBUILD
           cd aur
+          docker run --rm -v $GITHUB_WORKSPACE:/workspace -w /workspace archlinux:latest bash -c "
+            makepkg --printsrcinfo > .SRCINFO
+          "
           git add PKGBUILD
+          git add .SRCINFO
           git commit -m "Update PKGBUILD for v${{ needs.release.outputs.new_release_version }}"
           git push origin master
