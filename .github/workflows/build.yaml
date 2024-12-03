@@ -94,7 +94,7 @@ jobs:
           ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
           git config --global user.email "cedware-dev@protonmail.com"
           git config --global user.name "Cedric Krause"
-          git clone git clone ssh://aur@aur.archlinux.org/bountui aur
+          git clone ssh://aur@aur.archlinux.org/bountui aur
           if [ -f aur/PKGBUILD ]; then
             source aur/PKGBUILD
             pkgrel=$((pkgrel+1))
