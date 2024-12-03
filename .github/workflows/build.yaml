@@ -112,7 +112,9 @@ jobs:
           sed -i "s/sha256sums=.*/sha256sums=(\"$checksum\")/" aur/PKGBUILD
           cd aur
           docker run --rm -v $GITHUB_WORKSPACE:/workspace -w /workspace archlinux:latest bash -c "
-            makepkg --printsrcinfo > .SRCINFO
+            useradd -m builder && \
+            chown -R builder:builder /workspace && \
+            su builder -c 'makepkg --printsrcinfo > .SRCINFO'
           "
           git add PKGBUILD
           git add .SRCINFO
