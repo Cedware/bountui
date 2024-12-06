@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 #[derive(Default)]
 pub struct Alerts {
-    alerts: RefCell<Vec<Alert>>,
+    pub alerts: RefCell<Vec<Alert>>,
 }
 
 impl Alerts {

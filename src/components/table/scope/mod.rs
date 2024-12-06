@@ -5,7 +5,7 @@ use crate::components::table::{FilterItems, SortItems, TableColumn};
 use crate::components::{Alerts, TablePage};
 use crate::router::Router;
 use crate::routes::Routes;
-use crossterm::event::Event;
+use crossterm::event::{Event, KeyCode};
 use ratatui::layout::Constraint;
 use ratatui::Frame;
 use std::cell::RefCell;
@@ -37,12 +37,12 @@ impl HasCommands for boundary::Scope {
             Command::new(
                 Commands::ListScopes,
                 "List scopes".to_string(),
-                "s".to_string(),
+                "⏎".to_string(),
             ),
             Command::new(
                 Commands::ListTargets,
                 "List targets".to_string(),
-                "t".to_string(),
+                "⏎".to_string(),
             ),
         ]
     }
@@ -135,18 +135,25 @@ where
         });
     }
 
+    fn show_children(&mut self) {
+        if let Some(scope) = self.table_page.selected_item() {
+            if scope.can_list_child_scopes() {
+                self.list_scopes(scope.as_ref());
+            } else if scope.can_list_targets() {
+                self.list_targets(scope.as_ref());
+            }
+        }
+
+    }
+
     pub fn handle_event(&mut self, event: &Event) -> bool {
         if self.table_page.handle_event(event) {
             return true;
         }
         if let Event::Key(key_event) = event {
             match key_event.code {
-                crossterm::event::KeyCode::Char('s') => {
-                    self.list_scopes(self.table_page.selected_item().unwrap().as_ref());
-                    return true;
-                }
-                crossterm::event::KeyCode::Char('t') => {
-                    self.list_targets(self.table_page.selected_item().unwrap().as_ref());
+                KeyCode::Enter => {
+                    self.show_children();
                     return true;
                 }
                 _ => {}
@@ -172,4 +179,89 @@ impl FilterItems<boundary::Scope> for TablePage<'_, boundary::Scope> {
             || Self::match_str(&item.description, search)
             || Self::match_str(&item.id, search)
     }
+}
+
+#[cfg(test)]
+mod test {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use crossterm::event::{Event, KeyCode, KeyEvent};
+    use crate::boundary;
+    use crate::components::Alerts;
+    use crate::components::table::scope::ScopesPage;
+    use crate::router::Router;
+    use crate::routes::Routes;
+
+    fn scopes() -> Vec<boundary::Scope> {
+        vec![
+            boundary::Scope {
+                id: String::from("scope-id-1"),
+                name: String::from("scope-name-1"),
+                description: String::from("scope-description-1"),
+                type_name: String::from("scope-type-1"),
+                authorized_collection_actions: HashMap::from([("scopes".to_string(), vec!["list".to_string()])]),
+            },
+            boundary::Scope {
+                id: String::from("scope-id-2"),
+                name: String::from("scope-name-2"),
+                description: String::from("scope-description-2"),
+                type_name: String::from("scope-type-2"),
+                authorized_collection_actions: HashMap::from([("targets".to_string(), vec!["list".to_string()])]),
+            },
+        ]
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_show_child_scopes() {
+        tokio::task::block_in_place(|| {
+
+            let mut boundary_client = boundary::MockApiClient::new();
+            boundary_client.expect_get_scopes()
+                .with(mockall::predicate::eq(None))
+                .return_once(move |_| Box::pin(async { Ok(scopes()) }));
+
+            let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
+            let alerts = Alerts::default();
+
+            let mut page = ScopesPage::new(
+                None,
+                &boundary_client,
+                &router,
+                &alerts,
+            );
+            page.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+            let route = router.borrow_mut().poll_change();
+            assert!(route.is_some(), "Expected route change");
+            let route = route.unwrap();
+            assert_eq!(*route, Routes::Scopes { parent: Some(String::from("scope-id-1")) });
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_show_targets() {
+        tokio::task::block_in_place(|| {
+
+            let mut boundary_client = boundary::MockApiClient::new();
+            boundary_client.expect_get_scopes()
+                .with(mockall::predicate::eq(None))
+                .return_once(move |_| Box::pin(async { Ok(scopes()) }));
+
+            let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
+            let alerts = Alerts::default();
+
+            let mut page = ScopesPage::new(
+                None,
+                &boundary_client,
+                &router,
+                &alerts,
+            );
+            page.table_page.table_state.borrow_mut().select(Some(1));
+            page.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+            let route = router.borrow_mut().poll_change();
+            assert!(route.is_some(), "Expected route change");
+            let route = route.unwrap();
+            assert_eq!(*route, Routes::Targets { scope: String::from("scope-id-2") });
+        })
+    }
+
 }

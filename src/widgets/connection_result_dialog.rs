@@ -5,17 +5,17 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Widget};
 
-pub struct ConnectionResultDialog<'a> {
-    connect_result: &'a Result<boundary::ConnectResponse, boundary::Error>,
+pub struct ConnectResponseDialog<'a> {
+    connect_result: &'a boundary::ConnectResponse,
 }
 
-impl<'a> ConnectionResultDialog<'a> {
-    pub fn new(connect_result: &'a Result<boundary::ConnectResponse, boundary::Error>) -> Self {
+impl<'a> ConnectResponseDialog<'a> {
+    pub fn new(connect_result: &'a boundary::ConnectResponse) -> Self {
         Self { connect_result }
     }
 }
 
-impl<'a> Widget for ConnectionResultDialog<'a> {
+impl<'a> Widget for ConnectResponseDialog<'a> {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
@@ -25,11 +25,7 @@ impl<'a> Widget for ConnectionResultDialog<'a> {
         let [area] = vertical.areas(area);
         let [area] = horizontal.areas(area);
 
-        let title = self
-            .connect_result
-            .as_ref()
-            .map(|_| "Success")
-            .unwrap_or("Error");
+        let title = "Success";
 
         let block = Block::bordered()
             .light_blue()
@@ -45,23 +41,14 @@ impl<'a> Widget for ConnectionResultDialog<'a> {
         ])
         .areas(inner_area);
 
-        let message = self
-            .connect_result
-            .as_ref()
-            .map(|_| "Connection established")
-            .unwrap_or("Failed to establish connection")
-            .into();
+        let message = "Connection established".into();
 
         let credentials = self
             .connect_result
-            .as_ref()
-            .map(|res| {
-                res.credentials
-                    .iter()
-                    .map(|c| format!("{}: {}", c.credential.username, c.credential.password).into())
-                    .collect::<Vec<Line>>()
-            })
-            .unwrap_or_default();
+            .credentials
+            .iter()
+            .map(|c| format!("{}: {}", c.credential.username, c.credential.password).into())
+            .collect::<Vec<Line>>();
 
         let mut lines = vec![Line::raw(""), message];
 
