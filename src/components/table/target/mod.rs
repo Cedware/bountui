@@ -168,7 +168,7 @@ impl<'a, C> TargetsPage<'a, C> {
                 self.connect_dialog = None;
                 match self.handle.block_on(connect_future) {
                     Ok(resp) => self.connect_response = Some(resp),
-                    Err(e) => self.alerts.alert("Error", format!("Failed to connect: {e}"))
+                    Err(e) => self.alerts.alert("Error", format!("Failed to connect:\n {e}"))
                 }
             }
         }
