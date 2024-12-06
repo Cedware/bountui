@@ -48,7 +48,9 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           retention-days: 1
   release:
-    needs: build
+    needs:
+        - build
+        - test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     outputs:
