@@ -6,8 +6,10 @@ use crate::boundary::error::Error;
 use crate::boundary::models::{ConnectResponse, Target};
 use crate::boundary::{Scope, Session};
 use std::future::Future;
+use mockall::automock;
 use tokio_util::sync::CancellationToken;
 
+#[automock]
 pub trait ApiClient {
     fn get_scopes(
         &self,
