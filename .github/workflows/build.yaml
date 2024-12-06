@@ -11,6 +11,12 @@ on:
       - main
   workflow_dispatch:
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: cargo test
   build:
     strategy:
       fail-fast: false
@@ -42,7 +48,9 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           retention-days: 1
   release:
-    needs: build
+    needs:
+        - build
+        - test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     outputs:
