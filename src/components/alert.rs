@@ -43,7 +43,8 @@ impl Alert {
         ])
         .areas(block.inner(area));
 
-        let paragraph = Paragraph::new(vec![Line::raw(self.message.as_str())])
+        let lines: Vec<Line> = self.message.lines().map(Line::raw).collect();
+        let paragraph = Paragraph::new(lines)
             .alignment(Alignment::Center)
             .wrap(Wrap::default());
 
