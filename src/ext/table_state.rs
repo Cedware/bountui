@@ -17,6 +17,7 @@ mod tests {
     use ratatui::widgets::TableState;
     use crate::ext::table_state::TableStateExt;
 
+    #[test]
     fn test_selected_coerced() {
         let mut table_state = TableState::new();
         table_state.select(None);

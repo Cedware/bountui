@@ -1,9 +1,9 @@
 use bon::Builder;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Builder, Deserialize, Debug, Clone, Eq, PartialEq)]
+#[derive(Builder, Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct Scope {
     pub id: String,
     pub name: String,
@@ -57,18 +57,18 @@ impl Target {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Credential {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq,)]
 pub struct CredentialEntry {
     pub credential: Credential,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ConnectResponse {
     #[serde(default)]
     pub credentials: Vec<CredentialEntry>,

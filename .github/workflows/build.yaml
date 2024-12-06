@@ -94,7 +94,7 @@ jobs:
           ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
           git config --global user.email "cedware-dev@protonmail.com"
           git config --global user.name "Cedric Krause"
-          git clone git clone ssh://aur@aur.archlinux.org/bountui aur
+          git clone ssh://aur@aur.archlinux.org/bountui aur
           if [ -f aur/PKGBUILD ]; then
             source aur/PKGBUILD
             pkgrel=$((pkgrel+1))
@@ -111,6 +111,10 @@ jobs:
           sed -i "s|source=.*|source=(\"$src_tarball_url\")|" aur/PKGBUILD
           sed -i "s/sha256sums=.*/sha256sums=(\"$checksum\")/" aur/PKGBUILD
           cd aur
+          docker run --rm -v $GITHUB_WORKSPACE/aur:/workspace -w /workspace -u $(id -u):$(id -g) archlinux:latest bash -c "
+            makepkg --printsrcinfo > .SRCINFO
+          "
           git add PKGBUILD
+          git add .SRCINFO
           git commit -m "Update PKGBUILD for v${{ needs.release.outputs.new_release_version }}"
           git push origin master
