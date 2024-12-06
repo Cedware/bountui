@@ -30,10 +30,11 @@ Currently, bountui has been tested with **OIDC authentication**. Other methods m
 bountui has been tested with **Boundary 0.17.x**. Other versions may work but are not officially supported.
 
 | Boundary Version | Compatibility |
-|-------------------|---------------|
-| 0.17.x           | ✅ Supported   |
+|------------------|---------------|
 | < 0.17.x         | ⚠️ Untested    |
-| > 0.17.x         | ⚠️ Untested    |
+| 0.17.x           | ✅ Supported   |
+| 0.18.x           | ✅ Supported   |
+| \> 0.18.x        | ⚠️ Untested    |
 
 ---
 
@@ -41,13 +42,12 @@ bountui has been tested with **Boundary 0.17.x**. Other versions may work but ar
 
 bountui provides several keyboard shortcuts for interacting with Boundary resources:
 
-| Shortcut  | Function                                      |
-|-----------|-----------------------------------------------|
-| `/`       | Search within table views                     |
-| `s`       | List child scopes of the selected scope       |
-| `t`       | List targets within the selected scope        |
-| `c`       | Connect to the selected target                |
-| `Shift+c` | Show active sessions for the selected target  |
-| `Ctrl+d`  | Stop the selected session                     |
-| `Ctrl+c`  | Quit bountui                                   |
-| `Esc`     | Go back to the previous view                  |
+| Shortcut | Function                                     |
+|----------|----------------------------------------------|
+| `/`      | Search within table views                    |
+| `⏎`       | Show child elements (conext sensitive)       |
+| `c`      | Connect to the selected target               |
+| `Shift+c` | Show active sessions for the selected target |
+| `Ctrl+d` | Stop the selected session                    |
+| `Ctrl+c` | Quit bountui                                 |
+| `Esc`    | Go back to the previous view                 |
