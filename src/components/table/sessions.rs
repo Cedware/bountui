@@ -1,7 +1,7 @@
 use crate::boundary;
 use crate::boundary::Session;
-use crate::components::table::commands::{Command, HasCommands};
-use crate::components::table::{FilterItems, SortItems, TableColumn};
+use crate::components::table::action::{Action};
+use crate::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::components::{Alerts, TablePage};
 use crate::connection_manager::ConnectionManager;
 use crate::router::Router;
@@ -23,27 +23,10 @@ pub struct SessionsPage<'a, C> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum SessionCommands {
+pub enum SessionAction {
     Stop,
 }
 
-impl HasCommands for Session {
-    type Id = SessionCommands;
-
-    fn commands() -> Vec<Command<Self::Id>> {
-        vec![Command::new(
-            SessionCommands::Stop,
-            "Stop".to_string(),
-            "Ctrl+D".to_string(),
-        )]
-    }
-
-    fn is_enabled(&self, id: Self::Id) -> bool {
-        match id {
-            SessionCommands::Stop => self.authorized_actions.contains(&"cancel:self".to_string()),
-        }
-    }
-}
 
 impl<'a, C> SessionsPage<'a, C> {
     pub(crate) fn new(
@@ -185,5 +168,23 @@ impl FilterItems<Session> for TablePage<'_, Session> {
 impl SortItems<Session> for TablePage<'_, Session> {
     fn sort(items: &mut Vec<Rc<Session>>) {
         items.sort_by(|a, b| a.created_time.cmp(&b.created_time));
+    }
+}
+
+impl HasActions<Session> for TablePage<'_, Session> {
+    type Id = SessionAction;
+
+    fn actions(&self) -> Vec<Action<Self::Id>> {
+        vec![Action::new(
+            SessionAction::Stop,
+            "Stop".to_string(),
+            "Ctrl+D".to_string(),
+        )]
+    }
+
+    fn is_action_enabled(&self, id: Self::Id, item: &Session) -> bool {
+        match id {
+            SessionAction::Stop => item.can_cancel(),
+        }
     }
 }

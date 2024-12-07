@@ -1,6 +1,6 @@
 use crate::boundary;
-use crate::components::table::commands::{Command, HasCommands};
-use crate::components::table::{FilterItems, SortItems, TableColumn};
+use crate::components::table::action::{Action};
+use crate::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::components::{Alerts, TablePage};
 use crate::router::Router;
 use crate::routes::Routes;
@@ -15,33 +15,9 @@ use ratatui::Frame;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy)]
-pub enum Commands {
+pub enum TargetAction {
     Connect,
     ShowConnections,
-}
-
-impl HasCommands for boundary::Target {
-    type Id = Commands;
-
-    fn commands() -> Vec<Command<Self::Id>> {
-        vec![
-            Command::new(Commands::Connect, "Connect".to_string(), "c".to_string()),
-            Command::new(
-                Commands::ShowConnections,
-                "Show connections".to_string(),
-                "Shift+C".to_string(),
-            ),
-        ]
-    }
-
-    fn is_enabled(&self, id: Self::Id) -> bool {
-        match id {
-            Commands::Connect => self
-                .authorized_actions
-                .contains(&"authorize-session".to_string()),
-            Commands::ShowConnections => true,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
@@ -246,6 +222,28 @@ impl FilterItems<boundary::Target> for TablePage<'_, boundary::Target> {
         Self::match_str(&item.name, search)
             || Self::match_str(&item.description, search)
             || Self::match_str(&item.id, search)
+    }
+}
+
+impl HasActions<Target> for TablePage<'_, Target> {
+    type Id = TargetAction;
+
+    fn actions(&self) -> Vec<Action<Self::Id>> {
+        vec![
+            Action::new(TargetAction::Connect, "Connect".to_string(), "c".to_string()),
+            Action::new(
+                TargetAction::ShowConnections,
+                "Show connections".to_string(),
+                "Shift+C".to_string(),
+            ),
+        ]
+    }
+
+    fn is_action_enabled(&self, id: Self::Id, item: &Target) -> bool {
+        match id {
+            TargetAction::Connect => item.can_connect(),
+            TargetAction::ShowConnections => true,
+        }
     }
 }
 

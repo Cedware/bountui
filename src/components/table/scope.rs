@@ -1,7 +1,7 @@
 use crate::boundary;
 use crate::boundary::Scope;
-use crate::components::table::commands::{Command, HasCommands};
-use crate::components::table::{FilterItems, SortItems, TableColumn};
+use crate::components::table::action::{Action};
+use crate::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::components::{Alerts, TablePage};
 use crate::router::Router;
 use crate::routes::Routes;
@@ -23,36 +23,11 @@ where
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Commands {
+pub enum ScopeAction {
     ListScopes,
     ListTargets,
 }
 
-impl HasCommands for boundary::Scope {
-    type Id = Commands;
-
-    fn commands() -> Vec<Command<Self::Id>> {
-        vec![
-            Command::new(
-                Commands::ListScopes,
-                "List scopes".to_string(),
-                "⏎".to_string(),
-            ),
-            Command::new(
-                Commands::ListTargets,
-                "List targets".to_string(),
-                "⏎".to_string(),
-            ),
-        ]
-    }
-
-    fn is_enabled(&self, id: Self::Id) -> bool {
-        match id {
-            Commands::ListScopes => self.can_list_child_scopes(),
-            Commands::ListTargets => self.can_list_targets(),
-        }
-    }
-}
 
 impl<'a, C> ScopesPage<'a, C>
 where
@@ -180,6 +155,33 @@ impl FilterItems<boundary::Scope> for TablePage<'_, boundary::Scope> {
     }
 }
 
+impl HasActions<Scope> for TablePage<'_, Scope> {
+    type Id = ScopeAction;
+
+    fn actions(&self) -> Vec<Action<Self::Id>> {
+                vec![
+                    Action::new(
+                        ScopeAction::ListScopes,
+                        "List scopes".to_string(),
+                        "⏎".to_string(),
+                    ),
+                    Action::new(
+                        ScopeAction::ListTargets,
+                        "List targets".to_string(),
+                        "⏎".to_string(),
+                    ),
+                ]
+    }
+
+    fn is_action_enabled(&self, id: Self::Id, item: &Scope) -> bool {
+        match id {
+            ScopeAction::ListScopes => item.can_list_child_scopes(),
+            ScopeAction::ListTargets => item.can_list_targets(),
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     use crate::boundary;
@@ -263,3 +265,4 @@ mod test {
     }
 
 }
+
