@@ -182,14 +182,13 @@ impl FilterItems<boundary::Scope> for TablePage<'_, boundary::Scope> {
 
 #[cfg(test)]
 mod test {
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-    use crossterm::event::{Event, KeyCode, KeyEvent};
     use crate::boundary;
-    use crate::components::Alerts;
     use crate::components::table::scope::ScopesPage;
+    use crate::components::Alerts;
     use crate::router::Router;
     use crate::routes::Routes;
+    use crossterm::event::{Event, KeyCode, KeyEvent};
+    use std::collections::HashMap;
 
     fn scopes() -> Vec<boundary::Scope> {
         vec![

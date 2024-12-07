@@ -260,7 +260,6 @@ mod test {
     use crate::connection_manager::ConnectionManager;
     use crate::router::Router;
     use crate::routes::Routes;
-    use std::cell::RefCell;
 
     fn connect_dialog() -> InputDialog<ConnectDialogButtons, ConnectDialogFields> {
         InputDialog::new(
