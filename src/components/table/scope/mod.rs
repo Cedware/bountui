@@ -8,7 +8,6 @@ use crate::routes::Routes;
 use crossterm::event::{Event, KeyCode};
 use ratatui::layout::Constraint;
 use ratatui::Frame;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct ScopesPage<'a, C>
@@ -19,7 +18,7 @@ where
     boundary_client: &'a C,
     table_page: TablePage<'a, boundary::Scope>,
     handle: tokio::runtime::Handle,
-    router: &'a RefCell<Router<Routes>>,
+    router: &'a Router<Routes>,
     alerts: &'a Alerts,
 }
 
@@ -62,7 +61,7 @@ where
     pub fn new(
         parent_scope_id: Option<String>,
         boundary_client: &'a C,
-        router: &'a RefCell<Router<Routes>>,
+        router: &'a Router<Routes>,
         alerts: &'a Alerts,
     ) -> Self
     where
@@ -121,7 +120,7 @@ where
         if !scope.can_list_child_scopes() {
             return;
         }
-        self.router.borrow_mut().push(Routes::Scopes {
+        self.router.push(Routes::Scopes {
             parent: Some(scope.id.clone()),
         });
     }
@@ -130,7 +129,7 @@ where
         if !scope.can_list_targets() {
             return;
         }
-        self.router.borrow_mut().push(Routes::Targets {
+        self.router.push(Routes::Targets {
             scope: scope.id.clone(),
         });
     }
@@ -220,7 +219,7 @@ mod test {
                 .with(mockall::predicate::eq(None))
                 .return_once(move |_| Box::pin(async { Ok(scopes()) }));
 
-            let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
+            let router = Router::new(Routes::Scopes { parent: None });
             let alerts = Alerts::default();
 
             let mut page = ScopesPage::new(
@@ -230,7 +229,7 @@ mod test {
                 &alerts,
             );
             page.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
-            let route = router.borrow_mut().poll_change();
+            let route = router.poll_change();
             assert!(route.is_some(), "Expected route change");
             let route = route.unwrap();
             assert_eq!(*route, Routes::Scopes { parent: Some(String::from("scope-id-1")) });
@@ -246,7 +245,7 @@ mod test {
                 .with(mockall::predicate::eq(None))
                 .return_once(move |_| Box::pin(async { Ok(scopes()) }));
 
-            let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
+            let router = Router::new(Routes::Scopes { parent: None });
             let alerts = Alerts::default();
 
             let mut page = ScopesPage::new(
@@ -257,7 +256,7 @@ mod test {
             );
             page.table_page.table_state.borrow_mut().select(Some(1));
             page.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
-            let route = router.borrow_mut().poll_change();
+            let route = router.poll_change();
             assert!(route.is_some(), "Expected route change");
             let route = route.unwrap();
             assert_eq!(*route, Routes::Targets { scope: String::from("scope-id-2") });

@@ -9,7 +9,6 @@ use crate::routes::Routes;
 use crossterm::event::Event;
 use ratatui::layout::Constraint;
 use ratatui::Frame;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct SessionsPage<'a, C> {
@@ -48,7 +47,7 @@ impl HasCommands for Session {
 
 impl<'a, C> SessionsPage<'a, C> {
     pub(crate) fn new(
-        router: &'a RefCell<Router<Routes>>,
+        router: &'a Router<Routes>,
         boundary_client: &'a C,
         connection_manager: &'a ConnectionManager<'a, C>,
         alerts: &'a Alerts,

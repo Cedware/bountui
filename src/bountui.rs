@@ -8,7 +8,7 @@ use crate::router::Router;
 use crate::routes::Routes;
 use crossterm::event::{Event, KeyCode};
 use ratatui::Frame;
-use std::cell::RefCell;
+
 
 pub enum Pages<'a, C>
 where
@@ -26,7 +26,7 @@ where
     boundary_client: &'a C,
     user_id: String,
     pub finished: bool,
-    router: &'a RefCell<Router<Routes>>,
+    router: &'a Router<Routes>,
     page: Pages<'a, C>,
     connection_manager: &'a ConnectionManager<'a, C>,
     alerts: &'a Alerts,
@@ -39,7 +39,7 @@ where
     pub fn new(
         boundary_client: &'a T,
         user_id: String,
-        router: &'a RefCell<Router<Routes>>,
+        router: &'a Router<Routes>,
         connection_manager: &'a ConnectionManager<T>,
         alerts: &'a Alerts,
     ) -> Self {
@@ -101,7 +101,7 @@ where
     }
 
     fn poll_router_change(&mut self) {
-        if let Some(new_route) = self.router.borrow_mut().poll_change() {
+        if let Some(new_route) = self.router.poll_change() {
             match new_route.as_ref() {
                 Routes::Scopes { parent } => self.show_scopes(parent.clone()),
                 Routes::Targets { scope } => self.show_targets(scope.clone()),
@@ -128,7 +128,7 @@ where
         if !page_update_result {
             if let Event::Key(key_event) = event {
                 if key_event.code == KeyCode::Esc {
-                    self.router.borrow_mut().pop();
+                    self.router.pop();
                 }
             }
         }

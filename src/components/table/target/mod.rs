@@ -12,7 +12,6 @@ use crate::connection_manager::ConnectionManager;
 use crate::widgets::ConnectResponseDialog;
 use ratatui::layout::Constraint;
 use ratatui::Frame;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy)]
@@ -64,7 +63,7 @@ pub struct TargetsPage<'a, C> {
     connection_manager: &'a ConnectionManager<'a, C>,
     connect_dialog: Option<InputDialog<ConnectDialogButtons, ConnectDialogFields>>,
     connect_response: Option<boundary::ConnectResponse>,
-    router: &'a RefCell<Router<Routes>>,
+    router: &'a Router<Routes>,
     alerts: &'a Alerts,
 }
 
@@ -72,7 +71,7 @@ impl<'a, C> TargetsPage<'a, C> {
     pub fn new(
         parent_scope_id: Option<String>,
         boundary_client: &'a C,
-        router: &'a RefCell<Router<Routes>>,
+        router: &'a Router<Routes>,
         connection_manager: &'a ConnectionManager<'a, C>,
         alerts: &'a Alerts,
     ) -> Self
@@ -205,7 +204,7 @@ impl<'a, C> TargetsPage<'a, C> {
             match key_event.code {
                 KeyCode::Char('C') => {
                     if let Some(selected_item) = self.table_page.selected_item() {
-                        self.router.borrow_mut().push(Routes::Sessions {
+                        self.router.push(Routes::Sessions {
                             scope_id: selected_item.scope_id.clone(),
                             target_id: selected_item.id.clone(),
                         });
@@ -315,7 +314,7 @@ mod test {
                 Box::pin(async { Err(boundary::Error::ApiError(1, "Some error".to_string())) })
             });
 
-        let router = RefCell::new(Router::new(Routes::Targets {scope: "".to_string()}));
+        let router = Router::new(Routes::Targets {scope: "".to_string()});
         let connection_manager = ConnectionManager::new(&boundary_client);
         let alerts = Alerts::default();
         
@@ -356,7 +355,7 @@ mod test {
                 })
             });
 
-        let router = RefCell::new(Router::new(Routes::Targets {scope: "".to_string()}));
+        let router = Router::new(Routes::Targets {scope: "".to_string()});
         let connection_manager = ConnectionManager::new(&boundary_client);
         let alerts = Alerts::default();
 
