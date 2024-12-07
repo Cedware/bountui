@@ -1,4 +1,4 @@
-mod commands;
+mod action;
 mod filter;
 pub mod scope;
 pub mod sessions;
@@ -11,7 +11,7 @@ use crossterm::event::{Event, KeyCode};
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
 
-use crate::components::table::commands::HasCommands;
+use crate::components::table::action::{Action};
 use crate::components::table::filter::Filter;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::{Position, Title};
@@ -32,6 +32,15 @@ pub trait FilterItems<T> {
     }
 
     fn matches(item: &T, search: &str) -> bool;
+}
+
+pub trait HasActions<T> {
+
+    type Id: Copy;
+
+    fn actions(&self) -> Vec<Action<Self::Id>>;
+    fn is_action_enabled(&self, id: Self::Id, item: &T) -> bool;
+
 }
 
 struct TableColumn<T> {
@@ -57,18 +66,16 @@ pub struct TablePage<'a, T> {
     visible_items: Vec<Rc<T>>,
     table_state: RefCell<TableState>,
     filter: Filter,
-    _router: &'a RefCell<Router<Routes>>,
+    _router: &'a Router<Routes>,
 }
 
 impl<'a, T> TablePage<'a, T>
-where
-    T: HasCommands,
 {
     fn new(
         title: String,
         items: Vec<Rc<T>>,
         columns: Vec<TableColumn<T>>,
-        router: &'a RefCell<Router<Routes>>,
+        router: &'a Router<Routes>,
     ) -> Self {
         let table_state = TableState::new();
         let visible_items = items.to_vec();
@@ -93,14 +100,14 @@ where
         self.table_state.borrow_mut().select(Some(0));
     }
 
-    fn instructions(&self) -> Title<'a> {
-        let mut spans: Vec<Span> = T::commands()
+    fn instructions(&self) -> Title<'a> where Self: HasActions<T> {
+        let mut spans: Vec<Span> = self.actions()
             .iter()
             .map(|c| {
                 let span = Span::from(format!("  {}<{}>  ", c.name, c.shortcut));
                 if self
                     .selected_item()
-                    .map(|s| s.is_enabled(c.id))
+                    .map(|s| self.is_action_enabled(c.id, s.as_ref()))
                     .unwrap_or(false)
                 {
                     span
@@ -111,7 +118,7 @@ where
             .collect();
 
         let mut back = Span::from("  Back<ESC>  ");
-        if !self._router.borrow().can_go_back() {
+        if !self._router.can_go_back() {
             back = back.fg(Color::DarkGray);
         }
         spans.insert(0, back);
@@ -131,7 +138,7 @@ where
             .collect()
     }
 
-    fn table(&self) -> Table {
+    fn table(&self) -> Table where Self: HasActions<T> {
         let title = Title::from(self.title.clone().bold());
 
         let rows: Vec<Row> = self.rows();
@@ -264,7 +271,7 @@ where
         false
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn render(&self, frame: &mut Frame) where Self: HasActions<T> {
         let layout_constraints = if self.filter.is_input() {
             [Constraint::Length(3), Constraint::Fill(1)]
         } else {

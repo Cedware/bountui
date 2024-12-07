@@ -1,3 +1,4 @@
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 struct History<P> {
@@ -34,8 +35,8 @@ pub struct Router<P>
 where
     P: Clone,
 {
-    history: History<Rc<P>>,
-    new_page: Option<Rc<P>>,
+    history: RefCell<History<Rc<P>>>,
+    new_page: Cell<Option<Rc<P>>>,
 }
 
 impl<P> Router<P>
@@ -44,29 +45,31 @@ where
 {
     pub fn new(initial: P) -> Self {
         Router {
-            history: History::new(Rc::new(initial)),
-            new_page: None,
+            history: RefCell::new(History::new(Rc::new(initial))),
+            new_page: Cell::new(None),
         }
     }
 
-    pub fn push(&mut self, page: P) {
+    pub fn push(&self, page: P) {
         let page = Rc::new(page);
-        self.history.push(page.clone());
-        self.new_page = Some(page);
+        self.history.borrow_mut().push(page.clone());
+        self.new_page.replace(Some(page));
+       
     }
 
-    pub fn pop(&mut self) {
-        if self.history.len() > 1 {
-            self.history.pop();
-            self.new_page = Some(self.history.last().clone());
+    pub fn pop(&self) {
+        let mut history = self.history.borrow_mut();
+        if history.len() > 1 {
+            history.pop();
+            self.new_page.replace(Some(history.last().clone()));
         }
     }
 
-    pub fn poll_change(&mut self) -> Option<Rc<P>> {
+    pub fn poll_change(&self) -> Option<Rc<P>> {
         self.new_page.take()
     }
 
     pub fn can_go_back(&self) -> bool {
-        self.history.len() > 1
+        self.history.borrow().len() > 1
     }
 }

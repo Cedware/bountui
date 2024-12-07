@@ -1,14 +1,13 @@
 use crate::boundary;
 use crate::boundary::Scope;
-use crate::components::table::commands::{Command, HasCommands};
-use crate::components::table::{FilterItems, SortItems, TableColumn};
+use crate::components::table::action::{Action};
+use crate::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::components::{Alerts, TablePage};
 use crate::router::Router;
 use crate::routes::Routes;
 use crossterm::event::{Event, KeyCode};
 use ratatui::layout::Constraint;
 use ratatui::Frame;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct ScopesPage<'a, C>
@@ -19,41 +18,16 @@ where
     boundary_client: &'a C,
     table_page: TablePage<'a, boundary::Scope>,
     handle: tokio::runtime::Handle,
-    router: &'a RefCell<Router<Routes>>,
+    router: &'a Router<Routes>,
     alerts: &'a Alerts,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Commands {
+pub enum ScopeAction {
     ListScopes,
     ListTargets,
 }
 
-impl HasCommands for boundary::Scope {
-    type Id = Commands;
-
-    fn commands() -> Vec<Command<Self::Id>> {
-        vec![
-            Command::new(
-                Commands::ListScopes,
-                "List scopes".to_string(),
-                "⏎".to_string(),
-            ),
-            Command::new(
-                Commands::ListTargets,
-                "List targets".to_string(),
-                "⏎".to_string(),
-            ),
-        ]
-    }
-
-    fn is_enabled(&self, id: Self::Id) -> bool {
-        match id {
-            Commands::ListScopes => self.can_list_child_scopes(),
-            Commands::ListTargets => self.can_list_targets(),
-        }
-    }
-}
 
 impl<'a, C> ScopesPage<'a, C>
 where
@@ -62,7 +36,7 @@ where
     pub fn new(
         parent_scope_id: Option<String>,
         boundary_client: &'a C,
-        router: &'a RefCell<Router<Routes>>,
+        router: &'a Router<Routes>,
         alerts: &'a Alerts,
     ) -> Self
     where
@@ -121,7 +95,7 @@ where
         if !scope.can_list_child_scopes() {
             return;
         }
-        self.router.borrow_mut().push(Routes::Scopes {
+        self.router.push(Routes::Scopes {
             parent: Some(scope.id.clone()),
         });
     }
@@ -130,7 +104,7 @@ where
         if !scope.can_list_targets() {
             return;
         }
-        self.router.borrow_mut().push(Routes::Targets {
+        self.router.push(Routes::Targets {
             scope: scope.id.clone(),
         });
     }
@@ -181,16 +155,42 @@ impl FilterItems<boundary::Scope> for TablePage<'_, boundary::Scope> {
     }
 }
 
+impl HasActions<Scope> for TablePage<'_, Scope> {
+    type Id = ScopeAction;
+
+    fn actions(&self) -> Vec<Action<Self::Id>> {
+                vec![
+                    Action::new(
+                        ScopeAction::ListScopes,
+                        "List scopes".to_string(),
+                        "⏎".to_string(),
+                    ),
+                    Action::new(
+                        ScopeAction::ListTargets,
+                        "List targets".to_string(),
+                        "⏎".to_string(),
+                    ),
+                ]
+    }
+
+    fn is_action_enabled(&self, id: Self::Id, item: &Scope) -> bool {
+        match id {
+            ScopeAction::ListScopes => item.can_list_child_scopes(),
+            ScopeAction::ListTargets => item.can_list_targets(),
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod test {
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-    use crossterm::event::{Event, KeyCode, KeyEvent};
     use crate::boundary;
-    use crate::components::Alerts;
     use crate::components::table::scope::ScopesPage;
+    use crate::components::Alerts;
     use crate::router::Router;
     use crate::routes::Routes;
+    use crossterm::event::{Event, KeyCode, KeyEvent};
+    use std::collections::HashMap;
 
     fn scopes() -> Vec<boundary::Scope> {
         vec![
@@ -220,7 +220,7 @@ mod test {
                 .with(mockall::predicate::eq(None))
                 .return_once(move |_| Box::pin(async { Ok(scopes()) }));
 
-            let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
+            let router = Router::new(Routes::Scopes { parent: None });
             let alerts = Alerts::default();
 
             let mut page = ScopesPage::new(
@@ -230,7 +230,7 @@ mod test {
                 &alerts,
             );
             page.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
-            let route = router.borrow_mut().poll_change();
+            let route = router.poll_change();
             assert!(route.is_some(), "Expected route change");
             let route = route.unwrap();
             assert_eq!(*route, Routes::Scopes { parent: Some(String::from("scope-id-1")) });
@@ -246,7 +246,7 @@ mod test {
                 .with(mockall::predicate::eq(None))
                 .return_once(move |_| Box::pin(async { Ok(scopes()) }));
 
-            let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
+            let router = Router::new(Routes::Scopes { parent: None });
             let alerts = Alerts::default();
 
             let mut page = ScopesPage::new(
@@ -257,7 +257,7 @@ mod test {
             );
             page.table_page.table_state.borrow_mut().select(Some(1));
             page.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
-            let route = router.borrow_mut().poll_change();
+            let route = router.poll_change();
             assert!(route.is_some(), "Expected route change");
             let route = route.unwrap();
             assert_eq!(*route, Routes::Targets { scope: String::from("scope-id-2") });
@@ -265,3 +265,4 @@ mod test {
     }
 
 }
+

@@ -1,6 +1,6 @@
 use crate::boundary;
-use crate::components::table::commands::{Command, HasCommands};
-use crate::components::table::{FilterItems, SortItems, TableColumn};
+use crate::components::table::action::{Action};
+use crate::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::components::{Alerts, TablePage};
 use crate::router::Router;
 use crate::routes::Routes;
@@ -12,37 +12,12 @@ use crate::connection_manager::ConnectionManager;
 use crate::widgets::ConnectResponseDialog;
 use ratatui::layout::Constraint;
 use ratatui::Frame;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy)]
-pub enum Commands {
+pub enum TargetAction {
     Connect,
     ShowConnections,
-}
-
-impl HasCommands for boundary::Target {
-    type Id = Commands;
-
-    fn commands() -> Vec<Command<Self::Id>> {
-        vec![
-            Command::new(Commands::Connect, "Connect".to_string(), "c".to_string()),
-            Command::new(
-                Commands::ShowConnections,
-                "Show connections".to_string(),
-                "Shift+C".to_string(),
-            ),
-        ]
-    }
-
-    fn is_enabled(&self, id: Self::Id) -> bool {
-        match id {
-            Commands::Connect => self
-                .authorized_actions
-                .contains(&"authorize-session".to_string()),
-            Commands::ShowConnections => true,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
@@ -64,7 +39,7 @@ pub struct TargetsPage<'a, C> {
     connection_manager: &'a ConnectionManager<'a, C>,
     connect_dialog: Option<InputDialog<ConnectDialogButtons, ConnectDialogFields>>,
     connect_response: Option<boundary::ConnectResponse>,
-    router: &'a RefCell<Router<Routes>>,
+    router: &'a Router<Routes>,
     alerts: &'a Alerts,
 }
 
@@ -72,7 +47,7 @@ impl<'a, C> TargetsPage<'a, C> {
     pub fn new(
         parent_scope_id: Option<String>,
         boundary_client: &'a C,
-        router: &'a RefCell<Router<Routes>>,
+        router: &'a Router<Routes>,
         connection_manager: &'a ConnectionManager<'a, C>,
         alerts: &'a Alerts,
     ) -> Self
@@ -205,7 +180,7 @@ impl<'a, C> TargetsPage<'a, C> {
             match key_event.code {
                 KeyCode::Char('C') => {
                     if let Some(selected_item) = self.table_page.selected_item() {
-                        self.router.borrow_mut().push(Routes::Sessions {
+                        self.router.push(Routes::Sessions {
                             scope_id: selected_item.scope_id.clone(),
                             target_id: selected_item.id.clone(),
                         });
@@ -250,6 +225,28 @@ impl FilterItems<boundary::Target> for TablePage<'_, boundary::Target> {
     }
 }
 
+impl HasActions<Target> for TablePage<'_, Target> {
+    type Id = TargetAction;
+
+    fn actions(&self) -> Vec<Action<Self::Id>> {
+        vec![
+            Action::new(TargetAction::Connect, "Connect".to_string(), "c".to_string()),
+            Action::new(
+                TargetAction::ShowConnections,
+                "Show connections".to_string(),
+                "Shift+C".to_string(),
+            ),
+        ]
+    }
+
+    fn is_action_enabled(&self, id: Self::Id, item: &Target) -> bool {
+        match id {
+            TargetAction::Connect => item.can_connect(),
+            TargetAction::ShowConnections => true,
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod test {
@@ -261,7 +258,6 @@ mod test {
     use crate::connection_manager::ConnectionManager;
     use crate::router::Router;
     use crate::routes::Routes;
-    use std::cell::RefCell;
 
     fn connect_dialog() -> InputDialog<ConnectDialogButtons, ConnectDialogFields> {
         InputDialog::new(
@@ -315,7 +311,7 @@ mod test {
                 Box::pin(async { Err(boundary::Error::ApiError(1, "Some error".to_string())) })
             });
 
-        let router = RefCell::new(Router::new(Routes::Targets {scope: "".to_string()}));
+        let router = Router::new(Routes::Targets {scope: "".to_string()});
         let connection_manager = ConnectionManager::new(&boundary_client);
         let alerts = Alerts::default();
         
@@ -356,7 +352,7 @@ mod test {
                 })
             });
 
-        let router = RefCell::new(Router::new(Routes::Targets {scope: "".to_string()}));
+        let router = Router::new(Routes::Targets {scope: "".to_string()});
         let connection_manager = ConnectionManager::new(&boundary_client);
         let alerts = Alerts::default();
 

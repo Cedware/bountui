@@ -15,7 +15,6 @@ use crate::connection_manager::ConnectionManager;
 use crate::router::Router;
 use crate::routes::Routes;
 use crossterm::event;
-use std::cell::RefCell;
 use std::io;
 
 fn run_blocking() -> io::Result<()> {
@@ -33,7 +32,8 @@ fn run_blocking() -> io::Result<()> {
     };
     let mut terminal = ratatui::init();
     terminal.clear()?;
-    let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
+    let router = Router::new(Routes::Scopes { parent: None })
+        ;
     let connection_manager = ConnectionManager::new(&client);
     let alerts = Alerts::default();
     let mut app = Bountui::new(&client, user_id, &router, &connection_manager, &alerts);
