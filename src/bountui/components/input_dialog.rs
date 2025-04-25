@@ -4,39 +4,41 @@ use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
-use std::hash::Hash;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
+use crate::appframework::{Component, UpdateState};
+use crate::bountui::components::input_dialog::InputDialogMessage::{SelectItem, UpdateInput};
+use crate::bountui::Message;
 
 #[derive(Debug, Clone)]
-pub struct InputField<Id>
-where
-    Id: Clone,
-{
-    id: Id,
-    title: String,
-    value: Input,
+pub enum InputDialogMessage<InputId> {
+    SelectItem(SelectedItem),
+    UpdateInput(InputId, Event)
 }
 
-pub struct Button<ButtonId>
-where
-    ButtonId: Copy,
+#[derive(Debug)]
+pub struct InputField<InputId>
 {
-    id: ButtonId,
-    title: String,
+    pub id: InputId,
+    pub title: String,
+    pub value: Input,
 }
 
-impl<ButtonId> Button<ButtonId>
-where
-    ButtonId: Copy,
+pub struct Button<M, InputId>
 {
-    pub fn new<T>(id: ButtonId, title: T) -> Self
+    title: String,
+    on_triggered: Box<dyn Fn(&Vec<InputField<InputId>>) -> M>,
+}
+
+impl<M, InputId> Button<M,InputId>
+{
+    pub fn new<T>(title: T, on_pressed: impl Fn(&Vec<InputField<InputId>>) -> M + 'static) -> Self
     where
         T: Into<String>,
     {
         Self {
-            id,
             title: title.into(),
+            on_triggered: Box::new(on_pressed),
         }
     }
 }
@@ -58,33 +60,36 @@ where
     }
 }
 
-enum SelectedItem {
+#[derive(Debug, Clone)]
+pub enum SelectedItem {
     Field(usize),
     Button(usize),
 }
 
-pub struct InputDialog<ButtonId, FieldId>
-where
-    ButtonId: Copy,
-    FieldId: Clone,
+impl SelectedItem {
+    
+    fn is_field(&self) -> bool {
+        matches!(self, SelectedItem::Field(_))
+    }
+}
+
+pub struct InputDialog<FieldId, M>
 {
     title: String,
     fields: Vec<InputField<FieldId>>,
-    buttons: Vec<Button<ButtonId>>,
+    buttons: Vec<Button<M, FieldId>>,
     width: Constraint,
     height: Constraint,
     selected_item: SelectedItem,
 }
 
-impl<ButtonId, FieldId> InputDialog<ButtonId, FieldId>
-where
-    ButtonId: Copy,
-    FieldId: Copy + Eq + Hash,
+impl<FieldId, M> InputDialog<FieldId, M>
+
 {
     pub fn new(
         title: &str,
         fields: Vec<InputField<FieldId>>,
-        buttons: Vec<Button<ButtonId>>,
+        buttons: Vec<Button<M,FieldId>>,
     ) -> Self {
         let width = Constraint::Percentage(50);
         let height = Constraint::Percentage(50);
@@ -97,79 +102,78 @@ where
             height,
         }
     }
-
-    pub fn value(&self, field_id: FieldId) -> Option<&str> {
-        self.fields
-            .iter()
-            .find(|field| field.id == field_id)
-            .map(|field| field.value.value())
-    }
+    
 }
 
-impl<ButtonId, FieldId> InputDialog<ButtonId, FieldId>
-where
-    ButtonId: Copy,
-    FieldId: Clone,
+impl<FieldId, M> InputDialog<FieldId, M> where FieldId: Clone, M: From<InputDialogMessage<FieldId>>
 {
-    fn handle_event_while_input_selected(&mut self, event: &Event, selected_input_index: usize) {
+    fn handle_event_while_input_selected(&self, event: &Event, selected_input_index: usize) -> Option<M> {
         if let Event::Key(key_event) = event {
             match key_event.code {
                 KeyCode::Up => {
                     if selected_input_index > 0 {
-                        self.selected_item = SelectedItem::Field(selected_input_index - 1);
+                        return Some(M::from(SelectItem(SelectedItem::Field(selected_input_index - 1))))
                     }
                 }
                 KeyCode::Down | KeyCode::Tab => {
-                    if selected_input_index < self.fields.len() - 1 {
-                        self.selected_item = SelectedItem::Field(selected_input_index + 1);
+                    return if selected_input_index < self.fields.len() - 1 {
+                        M::from(SelectItem(SelectedItem::Field(selected_input_index + 1))).into()
                     } else {
-                        self.selected_item = SelectedItem::Button(0);
+                        M::from(SelectItem(SelectedItem::Button(0))).into()
                     }
                 }
                 _ => {
-                    if let Some(input) = self.fields.get_mut(selected_input_index) {
-                        input.value.handle_event(event);
+                    if let Some(input) = self.fields.get(selected_input_index) {
+                        return M::from(UpdateInput(input.id.clone(), event.clone())).into();
                     }
                 }
             }
         }
+        None
     }
 
     fn handle_event_while_button_is_selected(
-        &mut self,
+        &self,
         event: &Event,
         selected_button_index: usize,
-    ) -> Option<ButtonId> {
+    ) -> Option<M> {
         if let Event::Key(key_event) = event {
             match key_event.code {
                 KeyCode::Up => {
-                    self.selected_item = SelectedItem::Field(self.fields.len() - 1);
+                    return M::from(SelectItem(SelectedItem::Field(self.fields.len() - 1))).into();
                 }
                 KeyCode::Left => {
                     if selected_button_index > 0 {
-                        self.selected_item = SelectedItem::Button(selected_button_index - 1);
+                        return M::from(SelectItem(SelectedItem::Button(selected_button_index - 1))).into();
                     }
                 }
                 KeyCode::Right => {
                     if selected_button_index < self.buttons.len() - 1 {
-                        self.selected_item = SelectedItem::Button(selected_button_index + 1);
+                        return M::from(SelectItem(SelectedItem::Button(selected_button_index + 1))).into()
                     }
                 }
                 KeyCode::Enter => {
                     let button = self.buttons.get(selected_button_index).unwrap();
-                    return Some(button.id);
+                    return (button.on_triggered)(&self.fields).into();
                 }
                 KeyCode::Tab => {
-                    self.selected_item = if selected_button_index < self.buttons.len() - 1 {
-                        SelectedItem::Button(selected_button_index + 1)
+                    if selected_button_index < self.buttons.len() - 1 {
+                        return M::from(SelectItem(SelectedItem::Button(selected_button_index + 1))).into();
                     } else {
-                        SelectedItem::Field(0)
+                        return M::from(SelectItem(SelectedItem::Field(0))).into();
                     }
                 }
                 _ => {}
             }
         }
         None
+    }
+
+
+    fn update_input(&mut self, field_id: &FieldId, event: &Event) where FieldId: Eq {
+        if let Some(input) = self.fields.iter_mut().find(|field| field.id == *field_id) {
+            input.value.handle_event(event);
+        }
     }
 
     fn inputs(&self, max_title_len: usize) -> Paragraph {
@@ -215,17 +219,11 @@ where
         }
     }
 
-    pub fn handle_event(&mut self, event: &Event) -> Option<ButtonId> {
-        match self.selected_item {
-            SelectedItem::Field(i) => {
-                self.handle_event_while_input_selected(event, i);
-                None
-            }
-            SelectedItem::Button(i) => self.handle_event_while_button_is_selected(event, i),
-        }
-    }
 
-    pub fn render(&self, frame: &mut Frame) {
+}
+
+impl <FieldId, M> Component<M> for InputDialog<FieldId, M> where M: From<InputDialogMessage<FieldId>> , FieldId: Clone {
+    fn view(&self, frame: &mut Frame) {
         let area = frame.area();
         let vertical = Layout::vertical([self.height]).flex(Flex::Center);
         let horizontal = Layout::horizontal([self.width]).flex(Flex::Center);
@@ -245,7 +243,7 @@ where
             Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .areas(inner_area);
+            .areas(inner_area);
 
         let max_title_len = self
             .fields
@@ -260,5 +258,28 @@ where
         frame.render_widget(block, area);
         frame.render_widget(self.inputs(max_title_len), input_area);
         frame.render_widget(self.buttons(), button_area);
+    }
+
+    fn handle_event(&self, event: &Event) -> Option<M> {
+
+        match self.selected_item {
+            SelectedItem::Field(i) => self.handle_event_while_input_selected(event, i),
+            SelectedItem::Button(i) => self.handle_event_while_button_is_selected(event, i),
+        }
+
+    }
+}
+
+impl <FieldId, M> UpdateState<InputDialogMessage<FieldId>, Message> for InputDialog<FieldId, M> where FieldId: Eq + Clone, M: From<InputDialogMessage<FieldId>> {
+    async fn update(&mut self, message: &InputDialogMessage<FieldId>) -> Option<Message> {
+        match message {
+            SelectItem(selected_item) => {
+                self.selected_item = selected_item.clone();
+            },
+            UpdateInput(field_id, event) => {
+                self.update_input(field_id, event);
+            }
+        }
+        None
     }
 }

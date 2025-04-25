@@ -1,55 +1,21 @@
-mod app;
 mod boundary;
-mod bountui;
-mod components;
-pub mod connection_manager;
 mod ext;
-mod router;
-mod routes;
-mod widgets;
+mod bountui;
+mod appframework;
+pub mod event_ext;
 
+use std::env;
+use crate::appframework::Application;
 use crate::boundary::ApiClient;
-use crate::bountui::Bountui;
-use crate::components::Alerts;
-use crate::connection_manager::ConnectionManager;
-use crate::router::Router;
-use crate::routes::Routes;
-use crossterm::event;
-use std::io;
-
-fn run_blocking() -> io::Result<()> {
-    let client = boundary::CliClient::default();
-    let auth_result = tokio::runtime::Handle::current().block_on(client.authenticate());
-    let user_id = match auth_result {
-        Ok(auth) => {
-            std::env::set_var("BOUNDARY_TOKEN", &auth.attributes.token);
-            auth.attributes.user_id
-        },
-        Err(e) => {
-            eprintln!("Failed to authenticate: {}", e);
-            return Ok(());
-        }
-    };
-    let mut terminal = ratatui::init();
-    terminal.clear()?;
-    let router = Router::new(Routes::Scopes { parent: None })
-        ;
-    let connection_manager = ConnectionManager::new(&client);
-    let alerts = Alerts::default();
-    let mut app = Bountui::new(&client, user_id, &router, &connection_manager, &alerts);
-    while !app.finished {
-        terminal.draw(|frame| {
-            app.render(frame);
-        })?;
-
-        let event = event::read()?;
-        app.handle_event(&event);
-    }
-    terminal.clear()?;
-    Ok(())
-}
+use crate::bountui::BountuiApp;
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
-    tokio::task::block_in_place(run_blocking)
+async fn main() {
+    let boundary_client = boundary::CliClient::default();
+    let connection_manager = bountui::connection_manager::ConnectionManager::new(boundary_client.clone());
+    let auth_result = boundary_client.authenticate().await.unwrap();
+    env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token);
+    BountuiApp::new(boundary_client, connection_manager).await
+        .run(None)
+        .await.unwrap();
 }

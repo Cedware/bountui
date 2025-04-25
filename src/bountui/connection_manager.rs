@@ -16,13 +16,13 @@ pub enum ConnectionError {
     BoundaryError(#[from] boundary::Error),
 }
 
-pub struct ConnectionManager<'a, C> {
+pub struct ConnectionManager<C> {
     cancellation_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
-    boundary_client: &'a C,
+    boundary_client: C,
 }
 
-impl<'a, C> ConnectionManager<'a, C> {
-    pub fn new(boundary_client: &'a C) -> Self {
+impl<C> ConnectionManager<C> {
+    pub fn new(boundary_client: C) -> Self {
         ConnectionManager {
             cancellation_tokens: Arc::new(Mutex::new(HashMap::new())),
             boundary_client,
@@ -31,14 +31,12 @@ impl<'a, C> ConnectionManager<'a, C> {
 
     pub async fn connect(
         &self,
-        target: &boundary::Target,
+        target_id: &str,
         port: u16,
     ) -> Result<boundary::ConnectResponse, boundary::Error>
     where
         C: boundary::ApiClient,
     {
-        let target = target.clone();
-        let target_id = target.id.clone();
 
         let cancellation_token = CancellationToken::new();
         let response = self
