@@ -1,7 +1,6 @@
-
 use crate::boundary;
 use crate::boundary::{ConnectResponse, Target};
-use crate::bountui::components::input_dialog::{Button, InputDialog, InputDialogMessage, InputField};
+use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
@@ -33,12 +32,12 @@ pub struct TargetsPage {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result: Option<ConnectResponse>,
-    message_sender: tokio::sync::mpsc::Sender<Message>
+    message_tx: tokio::sync::mpsc::Sender<Message>
 }
 
 
 impl TargetsPage {
-    pub fn new(targets: Vec<Target>, message_sender: tokio::sync::mpsc::Sender<Message>) -> Self{
+    pub fn new(targets: Vec<Target>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self{
         let columns = vec![
             TableColumn::new(
                 "Name".to_string(),
@@ -62,12 +61,12 @@ impl TargetsPage {
             ),
         ];
 
-        let table_page = TablePage::new("Targets".to_string(), columns, targets);
+        let table_page = TablePage::new("Targets".to_string(), columns, targets, message_tx.clone());
         TargetsPage {
             table_page,
             connect_dialog: None,
             connect_result: None,
-            message_sender
+            message_tx
         }
     }
 
@@ -109,11 +108,9 @@ impl TargetsPage {
     async fn connect_to_target(&mut self) {
         if let Some(target) = self.table_page.selected_item() {
             let port: u16 = self.connect_dialog.as_ref().unwrap().fields.iter().find(|field| field.id == ConnectDialogFields::ListenPort).unwrap().value.value().parse().unwrap();
-            let (send_response, receive_response) = tokio::sync::oneshot::channel();
-            let _ = self.message_sender.send(Message::Connect {
+            let _ = self.message_tx.send(Message::Connect {
                 target_id: target.id.clone(),
                 port,
-                respond_to: send_response,
             }).await.unwrap();
             self.connect_dialog = None;
         }
@@ -121,7 +118,7 @@ impl TargetsPage {
 
     async fn show_sessions(&mut self) {
         if let Some(target) = self.table_page.selected_item() {
-            self.message_sender.send(Message::ShowSessions {
+            self.message_tx.send(Message::ShowSessions {
                 scope: target.scope_id.clone(),
                 target_id: target.id.clone()
             }).await.unwrap();
@@ -129,6 +126,11 @@ impl TargetsPage {
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
+
+        self.table_page.handle_event(event).await;
+        if self.table_page.is_filter_input_active() {
+            return;
+        }
 
         if let Some(connect_dialog) = &mut self.connect_dialog {
             if let Some(button_clicked) = connect_dialog.handle_event(event) {
@@ -165,7 +167,7 @@ impl TargetsPage {
                 _ => { }
             }
         }
-        self.table_page.handle_event(event);
+
     }
 
     pub fn handle_message(&mut self, message: TargetsPageMessage) {

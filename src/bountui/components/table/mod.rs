@@ -15,9 +15,11 @@ use ratatui::widgets::block::{Position, Title};
 use ratatui::widgets::{Block, Paragraph, Row, Table};
 use ratatui::Frame;
 use std::rc::Rc;
+use tokio::sync::mpsc;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 use crate::bountui::Message;
+use crate::bountui::Message::GoBack;
 
 pub trait SortItems<T> {
     fn sort(items: &mut Vec<Rc<T>>);
@@ -62,10 +64,12 @@ pub struct TablePage<T> {
     selected: Option<usize>,
     filter: Filter,
     can_go_back: bool,
+    message_tx: mpsc::Sender<Message>
 }
-impl<T> TablePage<T> {
-    fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>) -> Self {
-        let items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
+impl<T> TablePage<T> where Self: SortItems<T> {
+    fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, message_tx: mpsc::Sender<Message>) -> Self {
+        let mut items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
+        Self::sort(&mut items);
         let visible_items: Vec<Rc<T>> = items.iter().cloned().collect();
         let selected = if visible_items.is_empty() { None } else { Some(0) };
         TablePage {
@@ -76,11 +80,13 @@ impl<T> TablePage<T> {
             selected,
             filter: Filter::Disabled,
             can_go_back: false,
+            message_tx
         }
     }
     
     pub fn set_items(&mut self, items: Vec<T>) {
         self.items = items.into_iter().map(Rc::new).collect();
+        Self::sort(&mut self.items);
         self.visible_items = self.items.iter().cloned().collect();
         self.selected = if self.visible_items.is_empty() { None } else { Some(0) };
     }
@@ -128,7 +134,13 @@ impl<T> TablePage<T> {
     }
 
     fn show_filter(&mut self) {
-        self.filter = Filter::Input(Input::new("".to_string()));
+        self.filter =  if let Filter::Value(filter_value) = &self.filter {
+            Filter::Input(Input::new(filter_value.to_string()))
+        }
+        else {
+            Filter::Input(Input::new("".to_string()))
+        }
+
     }
 
     fn hide_filter(&mut self) {
@@ -211,7 +223,11 @@ impl<T> TablePage<T> {
             .block(block)
     }
 
-    fn handle_event(&mut self, event: &Event) where TablePage<T>: FilterItems<T> {
+    async fn go_back(&self) {
+        self.message_tx.send(GoBack).await.unwrap()
+    }
+
+    async fn handle_event(&mut self, event: &Event) where TablePage<T>: FilterItems<T> {
         if self.filter.is_input() {
             if let Event::Key(key_event) = event {
                 if let KeyCode::Enter = key_event.code {
@@ -226,6 +242,9 @@ impl<T> TablePage<T> {
                 KeyCode::Esc => {
                     if self.filter.is_active() {
                         self.reset_filter();
+                    }
+                    else {
+                        self.go_back().await;
                     }
                 }
                 KeyCode::Up => {

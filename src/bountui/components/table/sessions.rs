@@ -1,26 +1,24 @@
-
+use std::rc::Rc;
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Constraint;
 use tokio::sync::mpsc;
 use crate::boundary;
 use crate::boundary::Session;
-use crate::bountui::components::table::{FilterItems, HasActions, TableColumn};
+use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
 
 pub struct SessionsPage {
     table_page: TablePage<boundary::Session>,
-    user_id: String,
-    pub target_id: String,
     pub scope_id: String,
     message_tx: mpsc::Sender<Message>,
 }
 
 impl SessionsPage {
 
-    pub fn new(scope_id: String, target_id: String, sessions: Vec<Session>, message_tx: mpsc::Sender<Message>) -> Self {
+    pub fn new(scope_id: String, sessions: Vec<Session>, message_tx: mpsc::Sender<Message>) -> Self {
         let columns = vec![
             TableColumn::new(
                 "Id".to_string(),
@@ -49,12 +47,10 @@ impl SessionsPage {
             ),
         ];
 
-        let table_page = TablePage::new("Sessions".to_string(), columns, sessions);
+        let table_page = TablePage::new("Sessions".to_string(), columns, sessions, message_tx.clone());
 
         SessionsPage {
             table_page,
-            user_id: String::new(),
-            target_id,
             scope_id,
             message_tx
         }
@@ -82,7 +78,7 @@ impl SessionsPage {
                 self.stop_session().await;
             }
         }
-        self.table_page.handle_event(event);
+        self.table_page.handle_event(event).await;
     }
 
     pub fn set_sessions(&mut self, sessions: Vec<Session>) {
@@ -118,6 +114,12 @@ impl FilterItems<Session> for TablePage<Session> {
     }
 }
 
+
+impl SortItems<Session> for TablePage<Session> {
+    fn sort(items: &mut Vec<Rc<Session>>) {
+        items.sort_by(|a, b| a.created_time.cmp(&b.created_time));
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum SessionAction {

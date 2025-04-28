@@ -7,12 +7,6 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::Frame;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
-#[derive(Debug, Clone)]
-pub enum InputDialogMessage<InputId> {
-    SelectItem(SelectedItem),
-    UpdateInput(InputId, Event)
-}
-
 #[derive(Debug)]
 pub struct InputField<InputId>
 {
@@ -70,13 +64,6 @@ where
 pub enum SelectedItem {
     Field(usize),
     Button(usize),
-}
-
-impl SelectedItem {
-    
-    fn is_field(&self) -> bool {
-        matches!(self, SelectedItem::Field(_))
-    }
 }
 
 pub struct InputDialog<FieldId, ButtonId>

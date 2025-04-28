@@ -6,10 +6,6 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConnectionError {
-    #[error("An error occurred while connecting to target {0} on port {1}: {2}")]
-    ConnectionFailed(String, u16, boundary::Error),
-    #[error("Connection with id {0} not found")]
-    ConnectionNotFound(String),
     #[error("Failed to update internal state")]
     UpdateStateError,
     #[error("Boundary error: {0}")]

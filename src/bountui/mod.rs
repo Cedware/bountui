@@ -1,5 +1,4 @@
 use crate::boundary;
-use crate::boundary::ConnectResponse;
 use crate::bountui::components::table::scope::ScopesPage;
 use crate::bountui::components::table::sessions::SessionsPage;
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
@@ -8,15 +7,11 @@ use crate::bountui::widgets::Alert;
 use crate::event_ext::EventExt;
 use crossterm::event::Event;
 use ratatui::Frame;
-use std::fmt::{format, Display};
+use std::fmt::Display;
 use std::mem;
 
-mod app;
 pub mod components;
 pub mod connection_manager;
-pub mod router;
-pub mod routes;
-mod state;
 mod widgets;
 
 pub enum Message {
@@ -30,17 +25,15 @@ pub enum Message {
         scope: String,
         target_id: String,
     },
-    GoBack,
     Connect {
         target_id: String,
         port: u16,
-        respond_to: tokio::sync::oneshot::Sender<ConnectResponse>,
     },
     StopSession {
         session_id: String,
     },
+    GoBack,
     ShowAlert(String, String),
-    CloseAlert,
     Targets(TargetsPageMessage),
 }
 
@@ -160,8 +153,7 @@ where
     async fn connect(
         &mut self,
         target_id: &String,
-        port: u16,
-        respond_to: tokio::sync::oneshot::Sender<ConnectResponse>,
+        port: u16
     ) {
         match self.connection_manager.connect(target_id, port).await {
             Ok(resp) => {
@@ -198,13 +190,6 @@ where
 
     pub async fn handle_event(&mut self, event: &Event) {
 
-        if let Event::Key(key_event) = event {
-            if key_event.code == crossterm::event::KeyCode::Esc {
-                self.go_back();
-                return;
-            }
-        }
-
         if self.alert.is_some() && event.is_enter() {
             self.alert = None
         }
@@ -222,12 +207,10 @@ where
         match message {
             Message::ShowScopes { parent } => self.show_scope(&parent).await,
             Message::ShowTargets { parent } => self.show_targets(&parent).await,
-            Message::GoBack => self.go_back(),
             Message::Connect {
                 target_id,
                 port,
-                respond_to,
-            } => self.connect(&target_id, port, respond_to).await,
+            } => self.connect(&target_id, port).await,
             Message::ShowSessions {
                 scope,
                 target_id: target,
@@ -243,7 +226,6 @@ where
                     .collect();
                 self.navigate_to(Page::Sessions(SessionsPage::new(
                     scope.clone(),
-                    target.clone(),
                     sessions,
                     self.send_message.clone(),
                 )));
@@ -254,9 +236,7 @@ where
             Message::ShowAlert(title, message) => {
                 self.alert = Some((title.clone(), message.clone()));
             }
-            Message::CloseAlert => {
-                self.alert = None;
-            },
+            Message::GoBack => self.go_back(),
             Message::Targets(targets_message) => {
                 if let Page::Targets(targets_page) = &mut self.page {
                     targets_page.handle_message(targets_message);
@@ -265,51 +245,3 @@ where
         }
     }
 }
-
-// impl <C> UpdateState<Message, Message> for BountuiApp<C> where C: boundary::ApiClient + Clone {
-//     async fn update(&mut self, message: &Message) -> Option<Message> {
-//         match message {
-//             Message::Scopes(scopes_message) => {
-//                 if let Page::Scopes(scopes_page) = &mut self.page {
-//                     scopes_page.update(scopes_message).await
-//                 } else { None }
-//             },
-//             Message::Targets(targets_message) => {
-//                 if let Page::Targets(targets_page) = &mut self.page {
-//                     targets_page.update(targets_message).await
-//                 } else { None }
-//             },
-//             Message::Session(sessions_message) => {
-//                 if let Page::Sessions(sessions_page) = &mut self.page {
-//                     sessions_page.update(sessions_message).await
-//                 } else { None }
-//             },
-//             Message::ShowScopes { parent } => self.show_scope(parent).await,
-//             Message::ShowTargets { parent } => self.show_targets(parent).await,
-//             Message::GoBack => self.go_back(),
-//             Message::Connect { target_id, port } => self.connect(target_id, *port).await,
-//             Message::ShowSessions { scope, target_id: target } => {
-//                 let sessions = self.boundary_client.get_sessions(scope).await.unwrap()
-//                     .iter().filter(|s| s.target_id == *target).cloned().collect();
-//                 self.navigate_to(Page::Sessions(SessionsPage::new(scope.clone(), target.clone(), sessions)));
-//                 None
-//             },
-//             Message::StopSession { session_id } => {
-//                 self.stop_session(session_id).await;
-//                 None
-//             },
-//             Message::ShowAlert(title, message) => {
-//                 self.alert = Some((title.clone(), message.clone()));
-//                 None
-//             },
-//             Message::CloseAlert => {
-//                 self.alert = None;
-//                 None
-//             }
-//         }
-//     }
-// }
-
-// impl <C> Application<Message> for BountuiApp<C> where C: boundary::ApiClient + Clone {
-//
-// }

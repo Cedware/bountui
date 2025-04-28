@@ -1,11 +1,9 @@
 mod boundary;
-mod ext;
 mod bountui;
 pub mod event_ext;
 
 use std::env;
 use crossterm::event::Event;
-use futures::StreamExt;
 use tokio::select;
 use crate::boundary::ApiClient;
 use crate::bountui::BountuiApp;

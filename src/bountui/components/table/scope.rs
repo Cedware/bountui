@@ -23,7 +23,7 @@ pub enum ScopeAction {
 
 
 impl ScopesPage {
-    pub fn new(scopes: Vec<Scope>, send_message: tokio::sync::mpsc::Sender<Message>) -> Self {
+    pub fn new(scopes: Vec<Scope>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self {
         let columns = vec![
             TableColumn::new(
                 "Name".to_string(),
@@ -50,11 +50,12 @@ impl ScopesPage {
             "Scopes".to_string(),
             columns,
             scopes,
+            message_tx.clone()
         );
 
         ScopesPage {
             table_page,
-            send_message
+            send_message: message_tx
         }
     }
 
@@ -63,8 +64,9 @@ impl ScopesPage {
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
-        self.table_page.handle_event(event);
-        if self.table_page.is_filter_input_active() {
+        let filter_was_active = self.table_page.is_filter_input_active();
+        self.table_page.handle_event(event).await;
+        if filter_was_active {
             return;
         }
         if let Event::Key(key_event) = event {
@@ -78,10 +80,6 @@ impl ScopesPage {
                         self.send_message.send(Message::ShowTargets {
                             parent: Some(selected.id.clone()),
                         }).await.expect("Message channel closed unexpectedly");
-                        // todo
-                        // return Some(Message::ShowTargets {
-                        //     parent: Some(selected.id.clone())
-                        // });
                     }
                 }
             }
