@@ -59,6 +59,7 @@ pub struct BountuiApp<C> {
     connection_manager: ConnectionManager<C>,
     alert: Option<(String, String)>,
     send_message: tokio::sync::mpsc::Sender<Message>,
+    pub is_finished: bool,
 }
 
 impl<C> BountuiApp<C>
@@ -82,6 +83,7 @@ where
             connection_manager,
             alert: None,
             send_message,
+            is_finished: false,
         }
     }
 
@@ -190,6 +192,11 @@ where
 
     pub async fn handle_event(&mut self, event: &Event) {
 
+        if event.is_stop() {
+            self.is_finished = true;
+            return;
+        }
+        
         if self.alert.is_some() && event.is_enter() {
             self.alert = None
         }

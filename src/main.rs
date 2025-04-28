@@ -39,7 +39,7 @@ async fn main() {
     let mut cross_term_event_receiver = receive_cross_term_events();
 
 
-    loop {
+    while !app.is_finished {
         terminal.draw(|frame| {
             app.view(frame);
         }).unwrap();
