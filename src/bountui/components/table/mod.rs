@@ -8,10 +8,8 @@ use crossterm::event::{Event, KeyCode};
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
 
-use crate::appframework::{Component, UpdateState};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::filter::Filter;
-use crate::bountui::Message;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::{Position, Title};
 use ratatui::widgets::{Block, Paragraph, Row, Table};
@@ -19,6 +17,7 @@ use ratatui::Frame;
 use std::rc::Rc;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
+use crate::bountui::Message;
 
 pub trait SortItems<T> {
     fn sort(items: &mut Vec<Rc<T>>);
@@ -64,17 +63,6 @@ pub struct TablePage<T> {
     filter: Filter,
     can_go_back: bool,
 }
-
-#[derive(Debug, Clone)]
-pub enum TableMessage {
-    SelectNext,
-    SelectPrevious,
-    ShowFilter,
-    HideFilter,
-    UpdateFilterInput(Event),
-    ResetFilter,
-}
-
 impl<T> TablePage<T> {
     fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>) -> Self {
         let items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
@@ -101,6 +89,52 @@ impl<T> TablePage<T> {
         self.selected
             .map(|i| self.visible_items.get(i).cloned())
             .flatten()
+    }
+
+    fn reset_filter(&mut self) {
+        self.filter = Filter::Disabled;
+        self.visible_items = self.items.iter().cloned().collect();
+        self.selected = Some(0);
+    }
+
+    fn update_filter(&mut self, event: &Event) where TablePage<T>: FilterItems<T>  {
+        if let Filter::Input(filter_input) = &mut self.filter {
+            filter_input.handle_event(event);
+            let value = filter_input.value().to_string();
+            self.visible_items = self
+                .items
+                .iter()
+                .filter(|i| Self::matches(i.as_ref(), &value))
+                .map(Rc::clone)
+                .collect();
+            self.selected = Some(0);
+        }
+    }
+
+    fn select_next(&mut self) {
+        if let Some(selected_index) = self.selected {
+            if selected_index < self.visible_items.len() - 1 {
+                self.selected = Some(selected_index + 1);
+            }
+        }
+    }
+
+    fn select_previous(&mut self) {
+        if let Some(selected_index) = self.selected {
+            if selected_index > 0 {
+                self.selected = Some(selected_index - 1);
+            }
+        }
+    }
+
+    fn show_filter(&mut self) {
+        self.filter = Filter::Input(Input::new("".to_string()));
+    }
+
+    fn hide_filter(&mut self) {
+        if let Filter::Input(filter_input) = &self.filter {
+            self.filter = Filter::Value(filter_input.value().to_string());
+        }
     }
 
     fn instructions(&self) -> Title
@@ -176,13 +210,39 @@ impl<T> TablePage<T> {
             .highlight_style(Style::new().reversed())
             .block(block)
     }
-}
 
-impl<T> Component<TableMessage> for TablePage<T>
-where
-    TablePage<T>: HasActions<T>,
-{
-    fn view(&self, frame: &mut Frame) {
+    fn handle_event(&mut self, event: &Event) where TablePage<T>: FilterItems<T> {
+        if self.filter.is_input() {
+            if let Event::Key(key_event) = event {
+                if let KeyCode::Enter = key_event.code {
+                    self.hide_filter();
+                }
+            }
+            self.update_filter(event);
+        }
+
+        if let Event::Key(event) = event {
+            match event.code {
+                KeyCode::Esc => {
+                    if self.filter.is_active() {
+                        self.reset_filter();
+                    }
+                }
+                KeyCode::Up => {
+                    self.select_previous();
+                }
+                KeyCode::Down => {
+                    self.select_next();
+                }
+                KeyCode::Char('/') => {
+                    self.show_filter();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn view(&self, frame: &mut Frame) where Self: HasActions<T> {
         let layout_constraints = if self.filter.is_input() {
             [Constraint::Length(3), Constraint::Fill(1)]
         } else {
@@ -204,84 +264,8 @@ where
         frame.render_stateful_widget(self.table(), table_area, &mut table_state);
     }
 
-    fn handle_event(&self, event: &Event) -> Option<TableMessage> {
-        if self.filter.is_input() {
-            if let Event::Key(key_event) = event {
-                if let KeyCode::Enter = key_event.code {
-                    return Some(TableMessage::HideFilter.into())
-                }
-            }
-            return Some(TableMessage::UpdateFilterInput(event.clone()).into())
-        }
-
-        if let Event::Key(event) = event {
-            match event.code {
-                KeyCode::Esc => {
-                    if self.filter.is_active() {
-                        return Some(TableMessage::ResetFilter.into());
-                    }
-                }
-                KeyCode::Up => {
-                    return Some(TableMessage::SelectPrevious.into());
-                }
-                KeyCode::Down => {
-                    return Some(TableMessage::SelectNext.into());
-                }
-                KeyCode::Char('/') => {
-                    return Some(TableMessage::ShowFilter.into());
-                }
-                _ => {}
-            };
-        }
-        None
+    pub fn is_filter_input_active(&self) -> bool {
+        self.filter.is_input()
     }
-}
 
-impl<T> UpdateState<TableMessage, Message> for TablePage<T> where TablePage<T>: FilterItems<T> {
-    async fn update(&mut self, message: &TableMessage) -> Option<Message> {
-        match message {
-            TableMessage::SelectNext => {
-                if let Some(selected_index) = self.selected {
-                    if selected_index < self.visible_items.len() - 1 {
-                        self.selected = Some(selected_index + 1);
-                    }
-                }
-            }
-            TableMessage::SelectPrevious => {
-                if let Some(selected_index) = self.selected {
-                    if selected_index > 0 {
-                        self.selected = Some(selected_index - 1);
-                    }
-                }
-            }
-            TableMessage::ShowFilter => {
-                self.filter = Filter::Input(Input::new("".to_string()));
-            }
-            TableMessage::HideFilter => {
-                if let Filter::Input(filter_input) = &self.filter {
-                    self.filter = Filter::Value(filter_input.value().to_string());
-                }
-            }
-            TableMessage::UpdateFilterInput(event) => {
-                if let Filter::Input(filter_input) = &mut self.filter {
-                    filter_input.handle_event(event);
-                    let value = filter_input.value().to_string();
-                    self.visible_items = self
-                        .items
-                        .iter()
-                        .filter(|i| Self::matches(i.as_ref(), &value))
-                        .map(Rc::clone)
-                        .collect();
-                    self.selected = Some(0);
-                }
-            }
-            TableMessage::ResetFilter => {
-                self.filter = Filter::Disabled;
-                self.visible_items = self.items.iter().cloned().collect();
-                self.selected = Some(0);
-            }
-        }
-        None
-    }
 }
-

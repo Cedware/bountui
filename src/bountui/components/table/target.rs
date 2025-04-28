@@ -1,58 +1,44 @@
-use crate::appframework::{Component, UpdateState};
+
 use crate::boundary;
 use crate::boundary::{ConnectResponse, Target};
 use crate::bountui::components::input_dialog::{Button, InputDialog, InputDialogMessage, InputField};
 use crate::bountui::components::table::action::Action;
-use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn, TableMessage, };
+use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
+use crate::bountui::widgets::ConnectResponseDialog;
 use crate::bountui::Message;
 use crossterm::event::{Event, KeyCode};
-use ratatui::prelude::{Constraint, Widget};
+use ratatui::prelude::Constraint;
 use ratatui::Frame;
 use std::rc::Rc;
-use crate::bountui::widgets::ConnectResponseDialog;
 
-#[derive(Debug, Clone)]
-pub enum TargetsMessage {
-    OpenConnectDialog,
-    Table(TableMessage),
-    ConnectDialog(InputDialogMessage<ConnectDialogFields>),
-    FinishConnectDialog {
-        target_id: String,
-        port: u16
-    },
-    Connected(ConnectResponse),
-    CloseConnectResultDialog,
-    CancelConnect
+
+pub enum TargetsPageMessage {
+    ConnectedToTarget(ConnectResponse),
 }
-
-impl From<TargetsMessage> for Message {
-    fn from(value: TargetsMessage) -> Self {
-        Message::Targets(value)
-    }
-}
-
-impl From<InputDialogMessage<ConnectDialogFields>> for TargetsMessage {
-    fn from(value: InputDialogMessage<ConnectDialogFields>) -> Self {
-        TargetsMessage::ConnectDialog(value)
-    }
-}
-
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectDialogFields {
     ListenPort,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ConnectDialogButtons {
+    Cancel,
+    Ok,
+}
+
+
 pub struct TargetsPage {
     table_page: TablePage<boundary::Target>,
-    connect_dialog: Option<InputDialog<ConnectDialogFields, TargetsMessage>>,
+    connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result: Option<ConnectResponse>,
+    message_sender: tokio::sync::mpsc::Sender<Message>
 }
 
 
 impl TargetsPage {
-    pub fn new(targets: Vec<Target>) -> Self{
+    pub fn new(targets: Vec<Target>, message_sender: tokio::sync::mpsc::Sender<Message>) -> Self{
         let columns = vec![
             TableColumn::new(
                 "Name".to_string(),
@@ -81,19 +67,11 @@ impl TargetsPage {
             table_page,
             connect_dialog: None,
             connect_result: None,
+            message_sender
         }
     }
 
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TargetAction {
-    Connect,
-    ShowConnections,
-}
-
-impl Component<Message> for TargetsPage {
-    fn view(&self, frame: &mut Frame) {
+    pub fn view(&self, frame: &mut Frame) {
         self.table_page.view(frame);
         if let Some(connect_dialog) = &self.connect_dialog {
             connect_dialog.view(frame);
@@ -103,98 +81,107 @@ impl Component<Message> for TargetsPage {
         }
     }
 
-    fn handle_event(&self, event: &Event) -> Option<Message> {
-        
-        if let Some(connect_dialog) = &self.connect_dialog {
-            return connect_dialog.handle_event(event).map(Message::from);
+    fn close_connect_result_dialog(&mut self) {
+        self.connect_result = None;
+    }
+
+    fn open_connect_dialog(&mut self) {
+        self.connect_dialog = Some(InputDialog::new(
+            "Connect",
+            vec![
+                InputField::new(ConnectDialogFields::ListenPort, "Listen Port", ""),
+            ],
+            vec![
+                Button::new(ConnectDialogButtons::Cancel, "Cancel"),
+                Button::new(ConnectDialogButtons::Ok, "Ok"),
+            ]
+        ));
+    }
+
+    fn close_connect_dialog(&mut self) {
+        self.connect_dialog = None;
+    }
+
+    pub fn connection_establised(&mut self, response: ConnectResponse) {
+        self.connect_result = Some(response);
+    }
+    
+    async fn connect_to_target(&mut self) {
+        if let Some(target) = self.table_page.selected_item() {
+            let port: u16 = self.connect_dialog.as_ref().unwrap().fields.iter().find(|field| field.id == ConnectDialogFields::ListenPort).unwrap().value.value().parse().unwrap();
+            let (send_response, receive_response) = tokio::sync::oneshot::channel();
+            let _ = self.message_sender.send(Message::Connect {
+                target_id: target.id.clone(),
+                port,
+                respond_to: send_response,
+            }).await.unwrap();
+            self.connect_dialog = None;
+        }
+    }
+
+    async fn show_sessions(&mut self) {
+        if let Some(target) = self.table_page.selected_item() {
+            self.message_sender.send(Message::ShowSessions {
+                scope: target.scope_id.clone(),
+                target_id: target.id.clone()
+            }).await.unwrap();
+        }
+    }
+
+    pub async fn handle_event(&mut self, event: &Event) {
+
+        if let Some(connect_dialog) = &mut self.connect_dialog {
+            if let Some(button_clicked) = connect_dialog.handle_event(event) {
+                match button_clicked {
+                    ConnectDialogButtons::Cancel => {
+                        self.close_connect_dialog();
+                    }
+                    ConnectDialogButtons::Ok => {
+                        self.connect_to_target().await;
+                    }
+                }
+            }
         }
 
         if let Some(_) = &self.connect_result {
             if let Event::Key(key_event) = event {
                 match key_event.code {
                     KeyCode::Enter => {
-                        return Some(TargetsMessage::CloseConnectResultDialog.into())
+                        self.close_connect_result_dialog();
                     },
                     _ => { }
                 }
             }
-            return None
         }
-        
+
         if let Event::Key(key_event) = event {
-            match key_event.code { 
+            match key_event.code {
                 KeyCode::Char('c') => {
-                    return Some(TargetsMessage::OpenConnectDialog.into())
+                    self.open_connect_dialog();
                 },
                 KeyCode::Char('C') => {
-                    if let Some(target) = self.table_page.selected_item() {
-                        return Some(Message::ShowSessions {
-                            scope: target.scope_id.clone(),
-                            target_id: target.id.clone()
-                        })
-                    }
+                    self.show_sessions().await;
                 },
                 _ => { }
             }
         }
-        self.table_page.handle_event(event).map(TargetsMessage::Table).map(Message::from)
+        self.table_page.handle_event(event);
     }
-}
 
-impl UpdateState<TargetsMessage, Message> for TargetsPage {
-    async fn update(&mut self, message: &TargetsMessage) -> Option<Message> {
+    pub fn handle_message(&mut self, message: TargetsPageMessage) {
         match message {
-            TargetsMessage::Table(table_message) => {
-                self.table_page.update(table_message).await
-            },
-            TargetsMessage::ConnectDialog(dialog_message) => {
-                if let Some(dialog) = &mut self.connect_dialog {
-                    dialog.update(dialog_message).await
-                } else {
-                    None
-                }
-            },
-            TargetsMessage::CancelConnect => {
-                self.connect_dialog = None;
-                None
-            },
-            TargetsMessage::FinishConnectDialog {target_id, port} => {
-                self.connect_dialog = None;
-                Some(Message::Connect {
-                    target_id: target_id.clone(),
-                    port: *port
-                })
-            },
-            TargetsMessage::OpenConnectDialog => {
-                let target_id = self.table_page.selected_item().unwrap().id.clone();
-                self.connect_dialog = Some(InputDialog::new(
-                    "Connect",
-                    vec![
-                        InputField::new(ConnectDialogFields::ListenPort, "Listen Port", ""),
-                    ],
-                    vec![
-                        Button::new("Cancel", |_| TargetsMessage::CancelConnect),
-                        Button::new("Ok", move |fields| {
-                            let port: u16 = fields.iter().find(|field| field.id == ConnectDialogFields::ListenPort).unwrap().value.value().parse().unwrap();
-                            TargetsMessage::FinishConnectDialog {
-                                target_id: target_id.clone(),
-                                port
-                            }
-                        }),
-                    ]
-                ));
-                None
-            },
-            TargetsMessage::Connected(response) => {
-                self.connect_result = Some(response.clone());
-                None
-            },
-            TargetsMessage::CloseConnectResultDialog => {
-                self.connect_result = None;
-                None
+            TargetsPageMessage::ConnectedToTarget(response) => {
+                self.connection_establised(response);
             }
         }
     }
+
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TargetAction {
+    Connect,
+    ShowConnections,
 }
 
 impl SortItems<boundary::Target> for TablePage<boundary::Target> {
