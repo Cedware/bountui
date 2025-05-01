@@ -50,7 +50,7 @@ impl<T> TableColumn<T> {
     }
 }
 
-pub struct TablePage<T, A> where A: Copy {
+pub struct TablePage<T> {
     title: String,
     columns: Vec<TableColumn<T>>,
     items: Vec<Rc<T>>,
@@ -58,10 +58,10 @@ pub struct TablePage<T, A> where A: Copy {
     selected: Option<usize>,
     filter: Filter,
     message_tx: mpsc::Sender<Message>,
-    actions: Vec<Action<T, A>>
+    actions: Vec<Action<T>>
 }
-impl<T, A> TablePage<T, A> where Self: SortItems<T>, A: Copy {
-    pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, actions: Vec<Action<T, A>>, message_tx: mpsc::Sender<Message>) -> Self {
+impl<T> TablePage<T> where Self: SortItems<T> {
+    pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, actions: Vec<Action<T>>, message_tx: mpsc::Sender<Message>) -> Self {
         let mut items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
         Self::sort(&mut items);
         let visible_items: Vec<Rc<T>> = items.iter().cloned().collect();
@@ -97,7 +97,7 @@ impl<T, A> TablePage<T, A> where Self: SortItems<T>, A: Copy {
         self.selected = Some(0);
     }
 
-    fn update_filter(&mut self, event: &Event) where TablePage<T, A>: FilterItems<T>  {
+    fn update_filter(&mut self, event: &Event) where TablePage<T>: FilterItems<T>  {
         if let Filter::Input(filter_input) = &mut self.filter {
             filter_input.handle_event(event);
             let value = filter_input.value().to_string();
@@ -207,7 +207,7 @@ impl<T, A> TablePage<T, A> where Self: SortItems<T>, A: Copy {
         self.message_tx.send(GoBack).await.unwrap()
     }
 
-    pub async fn handle_event(&mut self, event: &Event) where TablePage<T, A>: FilterItems<T> {
+    pub async fn handle_event(&mut self, event: &Event) where TablePage<T>: FilterItems<T> {
         if self.filter.is_input() {
             if let Event::Key(key_event) = event {
                 if let KeyCode::Enter = key_event.code {

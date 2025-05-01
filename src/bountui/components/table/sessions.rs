@@ -11,7 +11,7 @@ use crate::bountui::components::TablePage;
 use crate::bountui::Message;
 
 pub struct SessionsPage {
-    table_page: TablePage<boundary::Session, SessionAction>,
+    table_page: TablePage<boundary::Session>,
     pub scope_id: String,
     message_tx: mpsc::Sender<Message>,
 }
@@ -49,19 +49,16 @@ impl SessionsPage {
 
         let actions = vec![
             Action::new(
-                SessionAction::Quit,
                 "Quit".to_string(),
                 "Ctrl + C".to_string(),
                 Box::new(|_: Option<&Session>| true),
             ),
             Action::new(
-                SessionAction::Back,
                 "Back".to_string(),
                 "ESC".to_string(),
                 Box::new(|_: Option<&Session>| true),
             ),
             Action::new(
-                SessionAction::StopSession,
                 "Stop Session".to_string(),
                 "d".to_string(), // Note: Shortcut display only, actual handling is separate
                 Box::new(|item: Option<&Session>| item.map_or(false, |s| s.can_cancel())),
@@ -107,7 +104,7 @@ impl SessionsPage {
     }
 }
 
-impl FilterItems<Session> for TablePage<Session, SessionAction> {
+impl FilterItems<Session> for TablePage<Session> {
     fn matches(item: &Session, search: &str) -> bool {
         Self::match_str(&item.id, search)
             || Self::match_str(&item.target_id, search)
@@ -118,15 +115,8 @@ impl FilterItems<Session> for TablePage<Session, SessionAction> {
 }
 
 
-impl SortItems<Session> for TablePage<Session, SessionAction> {
+impl SortItems<Session> for TablePage<Session> {
     fn sort(items: &mut Vec<Rc<Session>>) {
         items.sort_by(|a, b| a.created_time.cmp(&b.created_time));
     }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum SessionAction {
-    StopSession,
-    Quit,
-    Back,
 }

@@ -10,18 +10,9 @@ use ratatui::Frame;
 use std::rc::Rc;
 
 pub struct ScopesPage {
-    table_page: TablePage<boundary::Scope, ScopeAction>,
+    table_page: TablePage<boundary::Scope>,
     send_message: tokio::sync::mpsc::Sender<Message>
 }
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ScopeAction {
-    ListScopes,
-    ListTargets,
-    Quit,
-    Back,
-}
-
 
 impl ScopesPage {
     pub fn new(scopes: Vec<Scope>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self {
@@ -50,25 +41,21 @@ impl ScopesPage {
 
         let actions = vec![
             Action::new(
-                ScopeAction::Quit,
                 "Quit".to_string(),
                 "Ctrl + C".to_string(),
                 Box::new(|_: Option<&Scope>| true),
             ),
             Action::new(
-                ScopeAction::Back,
                 "Back".to_string(),
                 "ESC".to_string(),
                 Box::new(|_: Option<&Scope>| true),
             ),
             Action::new(
-                ScopeAction::ListScopes,
                 "List Scopes".to_string(),
                 "⏎".to_string(),
                 Box::new(|item: Option<&Scope>| item.map_or(false, |s| s.can_list_child_scopes())),
             ),
             Action::new(
-                ScopeAction::ListTargets,
                 "List Targets".to_string(),
                 "⏎".to_string(),
                 Box::new(|item: Option<&Scope>| item.map_or(false, |s| s.can_list_targets())),
@@ -116,13 +103,13 @@ impl ScopesPage {
     }
 }
 
-impl SortItems<Scope> for TablePage<Scope, ScopeAction> {
+impl SortItems<Scope> for TablePage<Scope> {
     fn sort(items: &mut Vec<Rc<Scope>>) {
         items.sort_by(|a, b| a.name.cmp(&b.name));
     }
 }
 
-impl FilterItems<Scope> for TablePage<Scope, ScopeAction> {
+impl FilterItems<Scope> for TablePage<Scope> {
     fn matches(item: &Scope, search: &str) -> bool {
         Self::match_str(&item.name, search)
             || Self::match_str(&item.description, search)

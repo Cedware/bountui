@@ -27,16 +27,8 @@ pub enum ConnectDialogButtons {
     Ok,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum TargetAction {
-    ShowSessions,
-    Connect,
-    Quit,
-    Back,
-}
-
 pub struct TargetsPage {
-    table_page: TablePage<boundary::Target, TargetAction>,
+    table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result_dialog: Option<ConnectionResultDialog>,
     message_tx: tokio::sync::mpsc::Sender<Message>
@@ -70,25 +62,21 @@ impl TargetsPage {
 
         let actions = vec![
             Action::new(
-                TargetAction::Quit,
                 "Quit".to_string(),
                 "Ctrl + C".to_string(),
                 Box::new(|_: Option<&Target>| true),
             ),
             Action::new(
-                TargetAction::Back,
                 "Back".to_string(),
                 "ESC".to_string(),
                 Box::new(|_: Option<&Target>| true),
             ),
             Action::new(
-                TargetAction::ShowSessions,
                 "Show Sessions".to_string(),
                 "s".to_string(),
                 Box::new(|item: Option<&Target>| item.is_some()), // Enabled if any target is selected
             ),
             Action::new(
-                TargetAction::Connect,
                 "Connect".to_string(),
                 "c".to_string(),
                 Box::new(|item: Option<&Target>| item.map_or(false, |t| t.can_connect())),
@@ -235,13 +223,13 @@ impl TargetsPage {
 
 }
 
-impl SortItems<boundary::Target> for TablePage<boundary::Target, TargetAction> {
+impl SortItems<boundary::Target> for TablePage<boundary::Target> {
     fn sort(items: &mut Vec<Rc<boundary::Target>>) {
         items.sort_by(|a, b| a.name.cmp(&b.name));
     }
 }
 
-impl FilterItems<boundary::Target> for TablePage<boundary::Target, TargetAction> {
+impl FilterItems<boundary::Target> for TablePage<boundary::Target> {
     fn matches(item: &boundary::Target, search: &str) -> bool {
         Self::match_str(&item.name, search)
             || Self::match_str(&item.description, search)

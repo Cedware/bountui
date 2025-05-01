@@ -13,7 +13,7 @@ use std::rc::Rc;
 use tokio::sync::mpsc;
 
 pub struct ConnectionResultDialog {
-    table: TablePage<boundary::CredentialEntry, CredentialTableAction>,
+    table: TablePage<boundary::CredentialEntry>,
     message_tx: mpsc::Sender<Message>
 }
 
@@ -36,19 +36,16 @@ impl ConnectionResultDialog {
 
         let actions = vec![
             Action::new(
-                CredentialTableAction::Close,
                 "Close".to_string(),
                 "ESC".to_string(),
                 Box::new(|_: Option<&CredentialEntry>| true),
             ),
             Action::new(
-                CredentialTableAction::CopyUsername,
                 "Copy Username".to_string(),
                 "u".to_string(),
                 Box::new(|item: Option<&CredentialEntry>| item.is_some()),
             ),
             Action::new(
-                CredentialTableAction::CopyPassword,
                 "Copy Password".to_string(),
                 "p".to_string(),
                 Box::new(|item: Option<&CredentialEntry>| item.is_some()),
@@ -147,21 +144,14 @@ impl ConnectionResultDialog {
     }
 }
 
-impl SortItems<boundary::CredentialEntry> for TablePage<CredentialEntry, CredentialTableAction>{
+impl SortItems<boundary::CredentialEntry> for TablePage<CredentialEntry>{
     fn sort(items: &mut Vec<Rc<CredentialEntry>>) {
         items.sort_by(|a, b| a.credential.username.cmp(&b.credential.username))
     }
 }
 
-impl FilterItems<CredentialEntry> for TablePage<CredentialEntry, CredentialTableAction> {
+impl FilterItems<CredentialEntry> for TablePage<CredentialEntry> {
     fn matches(item: &CredentialEntry, search: &str) -> bool {
         Self::match_str(&item.credential.username, search)
     }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum CredentialTableAction {
-    CopyUsername,
-    CopyPassword,
-    Close,
 }

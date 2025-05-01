@@ -1,27 +1,18 @@
 use std::rc::Rc;
 
-pub struct Action<T, Id>
-where
-    Id: Copy,
-{
-    pub id: Id,
+pub struct Action<T> {
     pub name: String,
     pub shortcut: String,
     pub enabled: Box<dyn Fn(Option<&T>) -> bool>,
 }
 
-impl<T, Id> Action<T, Id>
-where
-    Id: Copy,
-{
+impl<T> Action<T> {
     pub fn new(
-        id: Id,
         name: String,
         shortcut: String,
         enabled: Box<dyn Fn(Option<&T>) -> bool>,
     ) -> Self {
         Self {
-            id,
             name,
             shortcut,
             enabled,
