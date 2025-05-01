@@ -1,55 +1,62 @@
-mod app;
 mod boundary;
 mod bountui;
-mod components;
-pub mod connection_manager;
-mod ext;
-mod router;
-mod routes;
-mod widgets;
+pub mod event_ext;
 
+use std::env;
+use crossterm::event::Event;
+use tokio::select;
 use crate::boundary::ApiClient;
-use crate::bountui::Bountui;
-use crate::components::Alerts;
-use crate::connection_manager::ConnectionManager;
-use crate::router::Router;
-use crate::routes::Routes;
-use crossterm::event;
-use std::cell::RefCell;
-use std::io;
+use crate::bountui::BountuiApp;
 
-fn run_blocking() -> io::Result<()> {
-    let client = boundary::CliClient::default();
-    let auth_result = tokio::runtime::Handle::current().block_on(client.authenticate());
-    let user_id = match auth_result {
-        Ok(auth) => {
-            std::env::set_var("BOUNDARY_TOKEN", &auth.attributes.token);
-            auth.attributes.user_id
-        },
-        Err(e) => {
-            eprintln!("Failed to authenticate: {}", e);
-            return Ok(());
+
+fn receive_cross_term_events() -> tokio::sync::mpsc::Receiver<Event> {
+
+    let (sender, receiver) = tokio::sync::mpsc::channel(100);
+    tokio::task::spawn(async move {
+        loop {
+            if let Ok(event) = crossterm::event::read() {
+                if sender.send(event).await.is_err() {
+                    break;
+                }
+            }
         }
-    };
-    let mut terminal = ratatui::init();
-    terminal.clear()?;
-    let router = RefCell::new(Router::new(Routes::Scopes { parent: None }));
-    let connection_manager = ConnectionManager::new(&client);
-    let alerts = Alerts::default();
-    let mut app = Bountui::new(&client, user_id, &router, &connection_manager, &alerts);
-    while !app.finished {
-        terminal.draw(|frame| {
-            app.render(frame);
-        })?;
-
-        let event = event::read()?;
-        app.handle_event(&event);
-    }
-    terminal.clear()?;
-    Ok(())
+    });
+    receiver
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
-    tokio::task::block_in_place(run_blocking)
+async fn main() {
+    let (send_message, mut receive_message) = tokio::sync::mpsc::channel(100);
+    let boundary_client = boundary::CliClient::default();
+    let connection_manager = bountui::connection_manager::ConnectionManager::new(boundary_client.clone());
+    let auth_result = boundary_client.authenticate().await.unwrap();
+    env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token);
+
+    let mut app = BountuiApp::new(boundary_client, connection_manager, send_message).await;
+    let mut terminal = ratatui::init();
+    terminal.clear().unwrap();
+
+    let mut cross_term_event_receiver = receive_cross_term_events();
+
+
+    while !app.is_finished {
+        terminal.draw(|frame| {
+            app.view(frame);
+        }).unwrap();
+
+        select! {
+            message = receive_message.recv() => {
+                if let Some(message) = message {
+                    app.handle_message(message).await;
+                }
+            }
+            event = cross_term_event_receiver.recv() => {
+                if let Some(event) = event {
+                    app.handle_event(&event).await;
+                }
+            }
+        }
+    }
+
+
 }

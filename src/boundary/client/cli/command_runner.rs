@@ -39,6 +39,7 @@ pub trait CommandRunner {
     fn spawn(&self, command: &mut Command) -> io::Result<Self::Child>;
 }
 
+#[derive(Copy, Clone)]
 pub struct DefaultCommandRunner;
 
 impl CommandRunner for DefaultCommandRunner {
