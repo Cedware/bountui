@@ -2,7 +2,7 @@ use crate::boundary;
 use crate::boundary::{ConnectResponse, Target};
 use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
-use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn};
+use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::{ConnectionResultDialog, TablePage};
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
@@ -36,7 +36,7 @@ pub enum TargetAction {
 }
 
 pub struct TargetsPage {
-    table_page: TablePage<boundary::Target>,
+    table_page: TablePage<boundary::Target, TargetAction>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result_dialog: Option<ConnectionResultDialog>,
     message_tx: tokio::sync::mpsc::Sender<Message>
@@ -68,7 +68,34 @@ impl TargetsPage {
             ),
         ];
 
-        let table_page = TablePage::new("Targets".to_string(), columns, targets, message_tx.clone());
+        let actions = vec![
+            Action::new(
+                TargetAction::Quit,
+                "Quit".to_string(),
+                "Ctrl + C".to_string(),
+                Box::new(|_: Option<&Target>| true),
+            ),
+            Action::new(
+                TargetAction::Back,
+                "Back".to_string(),
+                "ESC".to_string(),
+                Box::new(|_: Option<&Target>| true),
+            ),
+            Action::new(
+                TargetAction::ShowSessions,
+                "Show Sessions".to_string(),
+                "s".to_string(),
+                Box::new(|item: Option<&Target>| item.is_some()), // Enabled if any target is selected
+            ),
+            Action::new(
+                TargetAction::Connect,
+                "Connect".to_string(),
+                "c".to_string(),
+                Box::new(|item: Option<&Target>| item.map_or(false, |t| t.can_connect())),
+            ),
+        ];
+
+        let table_page = TablePage::new("Targets".to_string(), columns, targets, actions, message_tx.clone());
         TargetsPage {
             table_page,
             connect_dialog: None,
@@ -208,63 +235,16 @@ impl TargetsPage {
 
 }
 
-impl SortItems<boundary::Target> for TablePage<boundary::Target> {
+impl SortItems<boundary::Target> for TablePage<boundary::Target, TargetAction> {
     fn sort(items: &mut Vec<Rc<boundary::Target>>) {
         items.sort_by(|a, b| a.name.cmp(&b.name));
     }
 }
 
-impl FilterItems<boundary::Target> for TablePage<boundary::Target> {
+impl FilterItems<boundary::Target> for TablePage<boundary::Target, TargetAction> {
     fn matches(item: &boundary::Target, search: &str) -> bool {
         Self::match_str(&item.name, search)
             || Self::match_str(&item.description, search)
             || Self::match_str(&item.id, search)
-    }
-}
-
-impl HasActions<boundary::Target> for TablePage<boundary::Target> {
-    type Id = TargetAction;
-
-    fn actions(&self) -> Vec<Action<Self::Id>> {
-        let mut actions = vec![
-            Action::new(
-                TargetAction::Quit,
-                "Quit".to_string(),
-                "Ctrl + C".to_string(),
-            ),
-            Action::new(
-                TargetAction::Back,
-                "Back".to_string(),
-                "ESC".to_string(),
-            ),
-        ];
-        if let Some(target) = self.selected_item() {
-            actions.push(
-                Action::new(
-                    TargetAction::ShowSessions,
-                    "Show Sessions".to_string(),
-                    "s".to_string()
-                )
-            );
-            if target.can_connect() {
-                actions.push(
-                    Action::new(
-                        TargetAction::Connect,
-                        "Connect".to_string(),
-                        "c".to_string()
-                    )
-                );
-            }
-        }
-        actions
-    }
-
-    fn is_action_enabled(&self, id: Self::Id, item: &boundary::Target) -> bool {
-        match id {
-            TargetAction::ShowSessions => true, // Always possible to attempt to show sessions
-            TargetAction::Connect => item.can_connect(),
-            TargetAction::Quit => true,
-            TargetAction::Back => true,
-        }
     }
 }

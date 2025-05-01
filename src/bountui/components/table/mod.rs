@@ -34,13 +34,6 @@ pub trait FilterItems<T> {
     fn matches(item: &T, search: &str) -> bool;
 }
 
-pub trait HasActions<T> {
-    type Id: Copy;
-
-    fn actions(&self) -> Vec<Action<Self::Id>>;
-    fn is_action_enabled(&self, id: Self::Id, item: &T) -> bool;
-}
-
 pub struct TableColumn<T> {
     header: String,
     width: Constraint,
@@ -57,7 +50,7 @@ impl<T> TableColumn<T> {
     }
 }
 
-pub struct TablePage<T> {
+pub struct TablePage<T, A> where A: Copy {
     title: String,
     columns: Vec<TableColumn<T>>,
     items: Vec<Rc<T>>,
@@ -65,9 +58,10 @@ pub struct TablePage<T> {
     selected: Option<usize>,
     filter: Filter,
     message_tx: mpsc::Sender<Message>,
+    actions: Vec<Action<T, A>>
 }
-impl<T> TablePage<T> where Self: SortItems<T> {
-    pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, message_tx: mpsc::Sender<Message>) -> Self {
+impl<T, A> TablePage<T, A> where Self: SortItems<T>, A: Copy {
+    pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, actions: Vec<Action<T, A>>, message_tx: mpsc::Sender<Message>) -> Self {
         let mut items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
         Self::sort(&mut items);
         let visible_items: Vec<Rc<T>> = items.iter().cloned().collect();
@@ -79,6 +73,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             visible_items,
             selected,
             filter: Filter::Disabled,
+            actions,
             message_tx
         }
     }
@@ -102,7 +97,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         self.selected = Some(0);
     }
 
-    fn update_filter(&mut self, event: &Event) where TablePage<T>: FilterItems<T>  {
+    fn update_filter(&mut self, event: &Event) where TablePage<T, A>: FilterItems<T>  {
         if let Filter::Input(filter_input) = &mut self.filter {
             filter_input.handle_event(event);
             let value = filter_input.value().to_string();
@@ -149,19 +144,13 @@ impl<T> TablePage<T> where Self: SortItems<T> {
     }
 
     fn instructions(&self) -> Title
-    where
-        Self: HasActions<T>,
     {
         let spans: Vec<Span> = self
-            .actions()
+            .actions
             .iter()
             .map(|c| {
                 let span = Span::from(format!("  {}<{}>  ", c.name, c.shortcut));
-                if self
-                    .selected_item()
-                    .map(|s| self.is_action_enabled(c.id, s.as_ref()))
-                    .unwrap_or(false)
-                {
+                if (c.enabled)(self.selected_item().as_deref()) {
                     span
                 } else {
                     span.fg(Color::DarkGray)
@@ -186,8 +175,6 @@ impl<T> TablePage<T> where Self: SortItems<T> {
     }
 
     fn table(&self) -> Table
-    where
-        Self: HasActions<T>,
     {
         let title = Title::from(self.title.clone().bold());
 
@@ -220,7 +207,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         self.message_tx.send(GoBack).await.unwrap()
     }
 
-    pub async fn handle_event(&mut self, event: &Event) where TablePage<T>: FilterItems<T> {
+    pub async fn handle_event(&mut self, event: &Event) where TablePage<T, A>: FilterItems<T> {
         if self.filter.is_input() {
             if let Event::Key(key_event) = event {
                 if let KeyCode::Enter = key_event.code {
@@ -254,7 +241,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         }
     }
 
-    pub fn view(&self, frame: &mut Frame, area: Rect) where Self: HasActions<T> {
+    pub fn view(&self, frame: &mut Frame, area: Rect) {
         let layout_constraints = if self.filter.is_input() {
             [Constraint::Length(3), Constraint::Fill(1)]
         } else {

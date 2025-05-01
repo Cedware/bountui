@@ -5,13 +5,13 @@ use ratatui::layout::Constraint;
 use tokio::sync::mpsc;
 use crate::boundary;
 use crate::boundary::Session;
-use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn};
+use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
 
 pub struct SessionsPage {
-    table_page: TablePage<boundary::Session>,
+    table_page: TablePage<boundary::Session, SessionAction>,
     pub scope_id: String,
     message_tx: mpsc::Sender<Message>,
 }
@@ -47,7 +47,28 @@ impl SessionsPage {
             ),
         ];
 
-        let table_page = TablePage::new("Sessions".to_string(), columns, sessions, message_tx.clone());
+        let actions = vec![
+            Action::new(
+                SessionAction::Quit,
+                "Quit".to_string(),
+                "Ctrl + C".to_string(),
+                Box::new(|_: Option<&Session>| true),
+            ),
+            Action::new(
+                SessionAction::Back,
+                "Back".to_string(),
+                "ESC".to_string(),
+                Box::new(|_: Option<&Session>| true),
+            ),
+            Action::new(
+                SessionAction::StopSession,
+                "Stop Session".to_string(),
+                "d".to_string(), // Note: Shortcut display only, actual handling is separate
+                Box::new(|item: Option<&Session>| item.map_or(false, |s| s.can_cancel())),
+            ),
+        ];
+
+        let table_page = TablePage::new("Sessions".to_string(), columns, sessions, actions, message_tx.clone());
 
         SessionsPage {
             table_page,
@@ -86,44 +107,7 @@ impl SessionsPage {
     }
 }
 
-impl HasActions<Session> for TablePage<Session> {
-    type Id = SessionAction;
-
-    fn actions(&self) -> Vec<Action<Self::Id>> {
-        let mut actions = vec![
-            Action::new(
-                SessionAction::Quit,
-                "Quit".to_string(),
-                "Ctrl + C".to_string(),
-            ),
-            Action::new(
-                SessionAction::Back,
-                "Back".to_string(),
-                "ESC".to_string(),
-            ),
-        ];
-        if let Some(session) = self.selected_item() {
-           if session.can_cancel() {
-                actions.push(Action::new(
-                    SessionAction::StopSession,
-                    "Stop Session".to_string(),
-                    "d".to_string(),
-                ));
-           }
-        }
-        actions
-    }
-
-    fn is_action_enabled(&self, id: Self::Id, item: &Session) -> bool {
-        match id {
-            SessionAction::StopSession => item.can_cancel(),
-            SessionAction::Quit => true,
-            SessionAction::Back => true,
-        }
-    }
-}
-
-impl FilterItems<Session> for TablePage<Session> {
+impl FilterItems<Session> for TablePage<Session, SessionAction> {
     fn matches(item: &Session, search: &str) -> bool {
         Self::match_str(&item.id, search)
             || Self::match_str(&item.target_id, search)
@@ -134,7 +118,7 @@ impl FilterItems<Session> for TablePage<Session> {
 }
 
 
-impl SortItems<Session> for TablePage<Session> {
+impl SortItems<Session> for TablePage<Session, SessionAction> {
     fn sort(items: &mut Vec<Rc<Session>>) {
         items.sort_by(|a, b| a.created_time.cmp(&b.created_time));
     }

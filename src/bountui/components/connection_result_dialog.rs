@@ -1,6 +1,6 @@
 use crate::boundary;
 use crate::boundary::CredentialEntry;
-use crate::bountui::components::table::{Action, FilterItems, HasActions, SortItems, TableColumn};
+use crate::bountui::components::table::{Action, FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
 use arboard::Clipboard;
@@ -13,7 +13,7 @@ use std::rc::Rc;
 use tokio::sync::mpsc;
 
 pub struct ConnectionResultDialog {
-    table: TablePage<boundary::CredentialEntry>,
+    table: TablePage<boundary::CredentialEntry, CredentialTableAction>,
     message_tx: mpsc::Sender<Message>
 }
 
@@ -34,10 +34,32 @@ impl ConnectionResultDialog {
             )
         ];
 
+        let actions = vec![
+            Action::new(
+                CredentialTableAction::Close,
+                "Close".to_string(),
+                "ESC".to_string(),
+                Box::new(|_: Option<&CredentialEntry>| true),
+            ),
+            Action::new(
+                CredentialTableAction::CopyUsername,
+                "Copy Username".to_string(),
+                "u".to_string(),
+                Box::new(|item: Option<&CredentialEntry>| item.is_some()),
+            ),
+            Action::new(
+                CredentialTableAction::CopyPassword,
+                "Copy Password".to_string(),
+                "p".to_string(),
+                Box::new(|item: Option<&CredentialEntry>| item.is_some()),
+            ),
+        ];
+
         let table = TablePage::new(
             "Credentials".to_string(),
             columns,
             connect_response.credentials,
+            actions,
             message_tx.clone()
         );
 
@@ -125,13 +147,13 @@ impl ConnectionResultDialog {
     }
 }
 
-impl SortItems<boundary::CredentialEntry> for TablePage<CredentialEntry>{
+impl SortItems<boundary::CredentialEntry> for TablePage<CredentialEntry, CredentialTableAction>{
     fn sort(items: &mut Vec<Rc<CredentialEntry>>) {
         items.sort_by(|a, b| a.credential.username.cmp(&b.credential.username))
     }
 }
 
-impl FilterItems<CredentialEntry> for TablePage<CredentialEntry> {
+impl FilterItems<CredentialEntry> for TablePage<CredentialEntry, CredentialTableAction> {
     fn matches(item: &CredentialEntry, search: &str) -> bool {
         Self::match_str(&item.credential.username, search)
     }
@@ -142,36 +164,4 @@ pub enum CredentialTableAction {
     CopyUsername,
     CopyPassword,
     Close,
-}
-
-impl HasActions<boundary::CredentialEntry> for TablePage<boundary::CredentialEntry> {
-    type Id = CredentialTableAction;
-
-    fn actions(&self) -> Vec<Action<Self::Id>> {
-        vec![
-            Action::new(
-                CredentialTableAction::Close,
-                "Close".to_string(),
-                "ESC".to_string(),
-            ),
-            Action::new(
-                CredentialTableAction::CopyUsername,
-                "Copy Username".to_string(),
-                "u".to_string(),
-            ),
-            Action::new(
-                CredentialTableAction::CopyPassword,
-                "Copy Password".to_string(),
-                "p".to_string(),
-            ),
-        ]
-    }
-
-    fn is_action_enabled(&self, id: Self::Id, _item: &CredentialEntry) -> bool {
-        match id {
-            CredentialTableAction::CopyUsername => self.selected_item().is_some(),
-            CredentialTableAction::CopyPassword => self.selected_item().is_some(),
-            CredentialTableAction::Close => true,
-        }
-    }
 }
