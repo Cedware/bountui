@@ -121,7 +121,7 @@ where
             Ok(scopes) => {
                 self.navigate_to(Page::Scopes(ScopesPage::new(
                     scopes,
-                    self.send_message.clone(),
+                    self.send_message.clone()
                 )));
             }
             Err(e) => {

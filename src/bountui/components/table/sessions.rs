@@ -67,7 +67,7 @@ impl SessionsPage {
     }
 
     pub fn view(&self, frame: &mut Frame) {
-        self.table_page.view(frame);
+        self.table_page.view(frame, frame.area());
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
@@ -90,16 +90,35 @@ impl HasActions<Session> for TablePage<Session> {
     type Id = SessionAction;
 
     fn actions(&self) -> Vec<Action<Self::Id>> {
-        vec![Action::new(
-            SessionAction::Stop,
-            "Stop".to_string(),
-            "Ctrl+D".to_string(),
-        )]
+        let mut actions = vec![
+            Action::new(
+                SessionAction::Quit,
+                "Quit".to_string(),
+                "Ctrl + C".to_string(),
+            ),
+            Action::new(
+                SessionAction::Back,
+                "Back".to_string(),
+                "ESC".to_string(),
+            ),
+        ];
+        if let Some(session) = self.selected_item() {
+           if session.can_cancel() {
+                actions.push(Action::new(
+                    SessionAction::StopSession,
+                    "Stop Session".to_string(),
+                    "d".to_string(),
+                ));
+           }
+        }
+        actions
     }
 
     fn is_action_enabled(&self, id: Self::Id, item: &Session) -> bool {
         match id {
-            SessionAction::Stop => item.can_cancel(),
+            SessionAction::StopSession => item.can_cancel(),
+            SessionAction::Quit => true,
+            SessionAction::Back => true,
         }
     }
 }
@@ -121,7 +140,9 @@ impl SortItems<Session> for TablePage<Session> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum SessionAction {
-    Stop,
+    StopSession,
+    Quit,
+    Back,
 }

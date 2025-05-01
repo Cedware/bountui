@@ -3,14 +3,14 @@ use crate::boundary::{ConnectResponse, Target};
 use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn};
-use crate::bountui::components::TablePage;
-use crate::bountui::widgets::ConnectResponseDialog;
+use crate::bountui::components::{ConnectionResultDialog, TablePage};
 use crate::bountui::Message;
+use crate::bountui::Message::GoBack;
+use crate::util::MpscSenderExt;
 use crossterm::event::{Event, KeyCode};
 use ratatui::prelude::Constraint;
 use ratatui::Frame;
 use std::rc::Rc;
-
 
 pub enum TargetsPageMessage {
     ConnectedToTarget(ConnectResponse),
@@ -27,11 +27,18 @@ pub enum ConnectDialogButtons {
     Ok,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum TargetAction {
+    ShowSessions,
+    Connect,
+    Quit,
+    Back,
+}
 
 pub struct TargetsPage {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
-    connect_result: Option<ConnectResponse>,
+    connect_result_dialog: Option<ConnectionResultDialog>,
     message_tx: tokio::sync::mpsc::Sender<Message>
 }
 
@@ -65,23 +72,23 @@ impl TargetsPage {
         TargetsPage {
             table_page,
             connect_dialog: None,
-            connect_result: None,
+            connect_result_dialog: None,
             message_tx
         }
     }
 
     pub fn view(&self, frame: &mut Frame) {
-        self.table_page.view(frame);
+        self.table_page.view(frame, frame.area());
         if let Some(connect_dialog) = &self.connect_dialog {
             connect_dialog.view(frame);
         }
-        if let Some(connect_result) = &self.connect_result {
-            frame.render_widget(ConnectResponseDialog::new(connect_result), frame.area())
+        if let Some(connect_result_dialog) = &self.connect_result_dialog {
+            connect_result_dialog.view(frame);
         }
     }
 
     fn close_connect_result_dialog(&mut self) {
-        self.connect_result = None;
+        self.connect_result_dialog = None;
     }
 
     fn open_connect_dialog(&mut self) {
@@ -102,7 +109,7 @@ impl TargetsPage {
     }
 
     pub fn connection_establised(&mut self, response: ConnectResponse) {
-        self.connect_result = Some(response);
+        self.connect_result_dialog = Some(ConnectionResultDialog::new(response, self.message_tx.clone()));
     }
     
     async fn connect_to_target(&mut self) {
@@ -127,47 +134,68 @@ impl TargetsPage {
 
     pub async fn handle_event(&mut self, event: &Event) {
 
+        // 1. Handle ConnectionResultDialog FIRST if it's open
+        if let Some(dialog) = &mut self.connect_result_dialog {
+            if let Event::Key(key_event) = event {
+                if key_event.code == KeyCode::Esc {
+                    self.close_connect_result_dialog();
+                    return; // Consume Esc, don't forward
+                }
+            }
+            // Forward all other events to the dialog
+            dialog.handle_event(event).await;
+            return; // Consume the event, don't let TargetsPage handle it further
+        }
+
+        // 2. Handle ConnectDialog if it's open
+        if let Some(connect_dialog) = &mut self.connect_dialog {
+            match connect_dialog.handle_event(event) {
+                Some(ConnectDialogButtons::Cancel) => {
+                    self.close_connect_dialog();
+                    return; // Consume event
+                }
+                Some(ConnectDialogButtons::Ok) => {
+                    self.connect_to_target().await;
+                    return; // Consume event
+                }
+                None => {
+                    // Event was handled by the input field or ignored by the dialog
+                    return; // Consume event
+                }
+            }
+        }
+
+        // 3. Handle TablePage filtering input and basic navigation/actions
+        // Note: handle_event might consume events like Up/Down/Enter for selection/filtering
         self.table_page.handle_event(event).await;
         if self.table_page.is_filter_input_active() {
-            return;
+            return; // If filter is active, consume the event
         }
 
-        if let Some(connect_dialog) = &mut self.connect_dialog {
-            if let Some(button_clicked) = connect_dialog.handle_event(event) {
-                match button_clicked {
-                    ConnectDialogButtons::Cancel => {
-                        self.close_connect_dialog();
-                    }
-                    ConnectDialogButtons::Ok => {
-                        self.connect_to_target().await;
-                    }
-                }
-            }
-        }
-
-        if let Some(_) = &self.connect_result {
-            if let Event::Key(key_event) = event {
-                match key_event.code {
-                    KeyCode::Enter => {
-                        self.close_connect_result_dialog();
-                    },
-                    _ => { }
-                }
-            }
-        }
-
+        // 4. Handle TargetsPage specific keys (only if dialogs are closed and filter is inactive)
         if let Event::Key(key_event) = event {
             match key_event.code {
                 KeyCode::Char('c') => {
-                    self.open_connect_dialog();
+                    // Only open connect dialog if a target is selected and can be connected to
+                    if let Some(target) = self.table_page.selected_item() {
+                         if target.can_connect() {
+                              self.open_connect_dialog();
+                         }
+                    }
                 },
                 KeyCode::Char('C') => {
-                    self.show_sessions().await;
+                    // Show sessions for the selected target if possible
+                     if self.table_page.selected_item().is_some() {
+                         self.show_sessions().await;
+                     }
+                },
+                KeyCode::Esc => {
+                    // Go back only if no dialogs are open
+                    self.message_tx.send_or_expect(GoBack).await;
                 },
                 _ => { }
             }
         }
-
     }
 
     pub fn handle_message(&mut self, message: TargetsPageMessage) {
@@ -178,12 +206,6 @@ impl TargetsPage {
         }
     }
 
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TargetAction {
-    Connect,
-    ShowConnections,
 }
 
 impl SortItems<boundary::Target> for TablePage<boundary::Target> {
@@ -204,20 +226,45 @@ impl HasActions<boundary::Target> for TablePage<boundary::Target> {
     type Id = TargetAction;
 
     fn actions(&self) -> Vec<Action<Self::Id>> {
-        vec![
-            Action::new(TargetAction::Connect, "Connect".to_string(), "c".to_string()),
+        let mut actions = vec![
             Action::new(
-                TargetAction::ShowConnections,
-                "Show connections".to_string(),
-                "Shift+C".to_string(),
+                TargetAction::Quit,
+                "Quit".to_string(),
+                "Ctrl + C".to_string(),
             ),
-        ]
+            Action::new(
+                TargetAction::Back,
+                "Back".to_string(),
+                "ESC".to_string(),
+            ),
+        ];
+        if let Some(target) = self.selected_item() {
+            actions.push(
+                Action::new(
+                    TargetAction::ShowSessions,
+                    "Show Sessions".to_string(),
+                    "s".to_string()
+                )
+            );
+            if target.can_connect() {
+                actions.push(
+                    Action::new(
+                        TargetAction::Connect,
+                        "Connect".to_string(),
+                        "c".to_string()
+                    )
+                );
+            }
+        }
+        actions
     }
 
     fn is_action_enabled(&self, id: Self::Id, item: &boundary::Target) -> bool {
         match id {
+            TargetAction::ShowSessions => true, // Always possible to attempt to show sessions
             TargetAction::Connect => item.can_connect(),
-            TargetAction::ShowConnections => true,
+            TargetAction::Quit => true,
+            TargetAction::Back => true,
         }
     }
 }
