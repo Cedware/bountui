@@ -8,18 +8,19 @@ use crossterm::event::{Event, KeyCode};
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
 
-use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::filter::Filter;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::{Position, Title};
 use ratatui::widgets::{Block, Paragraph, Row, Table};
 use ratatui::Frame;
 use std::rc::Rc;
+use ratatui::prelude::Rect;
 use tokio::sync::mpsc;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
+pub use action::Action;
 
 pub trait SortItems<T> {
     fn sort(items: &mut Vec<Rc<T>>);
@@ -33,21 +34,14 @@ pub trait FilterItems<T> {
     fn matches(item: &T, search: &str) -> bool;
 }
 
-pub trait HasActions<T> {
-    type Id: Copy;
-
-    fn actions(&self) -> Vec<Action<Self::Id>>;
-    fn is_action_enabled(&self, id: Self::Id, item: &T) -> bool;
-}
-
-struct TableColumn<T> {
+pub struct TableColumn<T> {
     header: String,
     width: Constraint,
     get_value: Box<dyn Fn(&T) -> String>,
 }
 
 impl<T> TableColumn<T> {
-    fn new(header: String, width: Constraint, get_value: Box<dyn Fn(&T) -> String>) -> Self {
+    pub fn new(header: String, width: Constraint, get_value: Box<dyn Fn(&T) -> String>) -> Self {
         TableColumn {
             header,
             width,
@@ -63,11 +57,11 @@ pub struct TablePage<T> {
     visible_items: Vec<Rc<T>>,
     selected: Option<usize>,
     filter: Filter,
-    can_go_back: bool,
-    message_tx: mpsc::Sender<Message>
+    message_tx: mpsc::Sender<Message>,
+    actions: Vec<Action<T>>
 }
 impl<T> TablePage<T> where Self: SortItems<T> {
-    fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, message_tx: mpsc::Sender<Message>) -> Self {
+    pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, actions: Vec<Action<T>>, message_tx: mpsc::Sender<Message>) -> Self {
         let mut items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
         Self::sort(&mut items);
         let visible_items: Vec<Rc<T>> = items.iter().cloned().collect();
@@ -79,7 +73,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             visible_items,
             selected,
             filter: Filter::Disabled,
-            can_go_back: false,
+            actions,
             message_tx
         }
     }
@@ -91,7 +85,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         self.selected = if self.visible_items.is_empty() { None } else { Some(0) };
     }
 
-    fn selected_item(&self) -> Option<Rc<T>> {
+    pub fn selected_item(&self) -> Option<Rc<T>> {
         self.selected
             .map(|i| self.visible_items.get(i).cloned())
             .flatten()
@@ -150,19 +144,13 @@ impl<T> TablePage<T> where Self: SortItems<T> {
     }
 
     fn instructions(&self) -> Title
-    where
-        Self: HasActions<T>,
     {
-        let mut spans: Vec<Span> = self
-            .actions()
+        let spans: Vec<Span> = self
+            .actions
             .iter()
             .map(|c| {
                 let span = Span::from(format!("  {}<{}>  ", c.name, c.shortcut));
-                if self
-                    .selected_item()
-                    .map(|s| self.is_action_enabled(c.id, s.as_ref()))
-                    .unwrap_or(false)
-                {
+                if (c.enabled)(self.selected_item().as_deref()) {
                     span
                 } else {
                     span.fg(Color::DarkGray)
@@ -170,12 +158,6 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             })
             .collect();
 
-        let mut back = Span::from("  Back<ESC>  ");
-        if self.can_go_back {
-            back = back.fg(Color::DarkGray);
-        }
-        spans.insert(0, back);
-        spans.insert(0, Span::from("  Quit <Ctrl + C>  "));
         Title::from(Line::from(spans))
     }
 
@@ -193,8 +175,6 @@ impl<T> TablePage<T> where Self: SortItems<T> {
     }
 
     fn table(&self) -> Table
-    where
-        Self: HasActions<T>,
     {
         let title = Title::from(self.title.clone().bold());
 
@@ -227,48 +207,65 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         self.message_tx.send(GoBack).await.unwrap()
     }
 
-    async fn handle_event(&mut self, event: &Event) where TablePage<T>: FilterItems<T> {
+    pub async fn handle_event(&mut self, event: &Event) -> bool where TablePage<T>: FilterItems<T> {
         if self.filter.is_input() {
-            if let Event::Key(key_event) = event {
-                if let KeyCode::Enter = key_event.code {
+            let handled = match event {
+                Event::Key(key_event) if key_event.code == KeyCode::Enter => {
                     self.hide_filter();
+                    true
+                },
+                _ => {
+                    // tui-input's handle_event doesn't indicate if it *actually* handled the event,
+                    // but for our purposes, if the filter input is active, we assume it did.
+                    self.update_filter(event);
+                    true
                 }
+            };
+            if handled {
+                return true;
             }
-            self.update_filter(event);
         }
 
-        if let Event::Key(event) = event {
-            match event.code {
+        if let Event::Key(key_event) = event {
+            match key_event.code {
                 KeyCode::Esc => {
                     if self.filter.is_active() {
                         self.reset_filter();
+                        return true;
                     }
                     else {
                         self.go_back().await;
+                        return true;
                     }
                 }
                 KeyCode::Up => {
                     self.select_previous();
+                    return true;
                 }
                 KeyCode::Down => {
                     self.select_next();
+                    return true;
                 }
                 KeyCode::Char('/') => {
                     self.show_filter();
+                    return true;
                 }
-                _ => {}
+                _ => {} // Event not handled by basic navigation/filtering
             }
         }
+        
+        // If we reach here, the event was not handled by the table page itself.
+        false
     }
 
-    fn view(&self, frame: &mut Frame) where Self: HasActions<T> {
+    pub fn view(&self, frame: &mut Frame, area: Rect) {
         let layout_constraints = if self.filter.is_input() {
             [Constraint::Length(3), Constraint::Fill(1)]
         } else {
             [Constraint::Length(0), Constraint::Fill(1)]
         };
 
-        let [search_area, table_area] = Layout::vertical(layout_constraints).areas(frame.area());
+        let [search_area, table_area] = Layout::vertical(layout_constraints).areas(area);
 
         if let Filter::Input(search) = &self.filter {
             let block = Block::bordered().light_blue().on_black();

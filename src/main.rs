@@ -1,6 +1,7 @@
 mod boundary;
 mod bountui;
 pub mod event_ext;
+mod util;
 
 use std::env;
 use crossterm::event::Event;

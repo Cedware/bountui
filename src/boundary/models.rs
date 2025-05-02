@@ -63,9 +63,15 @@ pub struct Credential {
     pub password: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq,)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CredentialSource {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CredentialEntry {
     pub credential: Credential,
+    pub credential_source: CredentialSource,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

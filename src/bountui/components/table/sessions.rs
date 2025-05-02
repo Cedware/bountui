@@ -5,7 +5,7 @@ use ratatui::layout::Constraint;
 use tokio::sync::mpsc;
 use crate::boundary;
 use crate::boundary::Session;
-use crate::bountui::components::table::{FilterItems, HasActions, SortItems, TableColumn};
+use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
@@ -47,7 +47,25 @@ impl SessionsPage {
             ),
         ];
 
-        let table_page = TablePage::new("Sessions".to_string(), columns, sessions, message_tx.clone());
+        let actions = vec![
+            Action::new(
+                "Quit".to_string(),
+                "Ctrl + C".to_string(),
+                Box::new(|_: Option<&Session>| true),
+            ),
+            Action::new(
+                "Back".to_string(),
+                "ESC".to_string(),
+                Box::new(|_: Option<&Session>| true),
+            ),
+            Action::new(
+                "Stop Session".to_string(),
+                "d".to_string(), // Note: Shortcut display only, actual handling is separate
+                Box::new(|item: Option<&Session>| item.map_or(false, |s| s.can_cancel())),
+            ),
+        ];
+
+        let table_page = TablePage::new("Sessions".to_string(), columns, sessions, actions, message_tx.clone());
 
         SessionsPage {
             table_page,
@@ -67,10 +85,13 @@ impl SessionsPage {
     }
 
     pub fn view(&self, frame: &mut Frame) {
-        self.table_page.view(frame);
+        self.table_page.view(frame, frame.area());
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
+        if self.table_page.handle_event(event).await {
+            return;
+        }
         if let Event::Key(key_event) = event {
             if key_event.code == crossterm::event::KeyCode::Char('d')
                 && key_event.modifiers == crossterm::event::KeyModifiers::CONTROL
@@ -78,29 +99,10 @@ impl SessionsPage {
                 self.stop_session().await;
             }
         }
-        self.table_page.handle_event(event).await;
     }
 
     pub fn set_sessions(&mut self, sessions: Vec<Session>) {
         self.table_page.set_items(sessions);
-    }
-}
-
-impl HasActions<Session> for TablePage<Session> {
-    type Id = SessionAction;
-
-    fn actions(&self) -> Vec<Action<Self::Id>> {
-        vec![Action::new(
-            SessionAction::Stop,
-            "Stop".to_string(),
-            "Ctrl+D".to_string(),
-        )]
-    }
-
-    fn is_action_enabled(&self, id: Self::Id, item: &Session) -> bool {
-        match id {
-            SessionAction::Stop => item.can_cancel(),
-        }
     }
 }
 
@@ -119,9 +121,4 @@ impl SortItems<Session> for TablePage<Session> {
     fn sort(items: &mut Vec<Rc<Session>>) {
         items.sort_by(|a, b| a.created_time.cmp(&b.created_time));
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum SessionAction {
-    Stop,
 }
