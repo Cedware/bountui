@@ -23,13 +23,18 @@ impl ConnectionResultDialog {
 
         let columns = vec![
             TableColumn::new(
+                "Credential Source".to_string(),
+                Constraint::Ratio(2,4),
+                Box::new(|e: &boundary::CredentialEntry| e.credential_source.name.clone())
+            ),
+            TableColumn::new(
                 "Username".to_string(),
-                Constraint::Ratio(1,2),
+                Constraint::Ratio(1,4),
                 Box::new(|e: &boundary::CredentialEntry| e.credential.username.clone())
             ),
             TableColumn::new(
                 "Password".to_string(),
-                Constraint::Ratio(1,2),
+                Constraint::Ratio(1,4),
                 Box::new(|e| e.credential.password.clone())
             )
         ];
@@ -153,5 +158,6 @@ impl SortItems<boundary::CredentialEntry> for TablePage<CredentialEntry>{
 impl FilterItems<CredentialEntry> for TablePage<CredentialEntry> {
     fn matches(item: &CredentialEntry, search: &str) -> bool {
         Self::match_str(&item.credential.username, search)
+            || Self::match_str(&item.credential_source.name, search)
     }
 }
