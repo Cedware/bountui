@@ -81,6 +81,9 @@ impl ScopesPage {
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
+        if self.table_page.handle_event(event).await {
+            return;
+        }
         if let Event::Key(key_event) = event {
             match key_event.code {
                 KeyCode::Enter => {
@@ -99,7 +102,6 @@ impl ScopesPage {
                 _ => {}
             }
         }
-        self.table_page.handle_event(event).await;
     }
 }
 

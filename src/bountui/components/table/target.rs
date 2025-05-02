@@ -182,9 +182,8 @@ impl TargetsPage {
 
         // 3. Handle TablePage filtering input and basic navigation/actions
         // Note: handle_event might consume events like Up/Down/Enter for selection/filtering
-        self.table_page.handle_event(event).await;
-        if self.table_page.is_filter_input_active() {
-            return; // If filter is active, consume the event
+        if self.table_page.handle_event(event).await {
+            return;
         }
 
         // 4. Handle TargetsPage specific keys (only if dialogs are closed and filter is inactive)

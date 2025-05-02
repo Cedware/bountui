@@ -207,38 +207,55 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         self.message_tx.send(GoBack).await.unwrap()
     }
 
-    pub async fn handle_event(&mut self, event: &Event) where TablePage<T>: FilterItems<T> {
+    pub async fn handle_event(&mut self, event: &Event) -> bool where TablePage<T>: FilterItems<T> {
         if self.filter.is_input() {
-            if let Event::Key(key_event) = event {
-                if let KeyCode::Enter = key_event.code {
+            let handled = match event {
+                Event::Key(key_event) if key_event.code == KeyCode::Enter => {
                     self.hide_filter();
+                    true
+                },
+                _ => {
+                    // tui-input's handle_event doesn't indicate if it *actually* handled the event,
+                    // but for our purposes, if the filter input is active, we assume it did.
+                    self.update_filter(event);
+                    true
                 }
+            };
+            if handled {
+                return true;
             }
-            self.update_filter(event);
         }
 
-        if let Event::Key(event) = event {
-            match event.code {
+        if let Event::Key(key_event) = event {
+            match key_event.code {
                 KeyCode::Esc => {
                     if self.filter.is_active() {
                         self.reset_filter();
+                        return true;
                     }
                     else {
                         self.go_back().await;
+                        return true;
                     }
                 }
                 KeyCode::Up => {
                     self.select_previous();
+                    return true;
                 }
                 KeyCode::Down => {
                     self.select_next();
+                    return true;
                 }
                 KeyCode::Char('/') => {
                     self.show_filter();
+                    return true;
                 }
-                _ => {}
+                _ => {} // Event not handled by basic navigation/filtering
             }
         }
+        
+        // If we reach here, the event was not handled by the table page itself.
+        false
     }
 
     pub fn view(&self, frame: &mut Frame, area: Rect) {

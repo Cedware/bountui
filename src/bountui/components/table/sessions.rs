@@ -89,6 +89,9 @@ impl SessionsPage {
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
+        if self.table_page.handle_event(event).await {
+            return;
+        }
         if let Event::Key(key_event) = event {
             if key_event.code == crossterm::event::KeyCode::Char('d')
                 && key_event.modifiers == crossterm::event::KeyModifiers::CONTROL
@@ -96,7 +99,6 @@ impl SessionsPage {
                 self.stop_session().await;
             }
         }
-        self.table_page.handle_event(event).await;
     }
 
     pub fn set_sessions(&mut self, sessions: Vec<Session>) {
