@@ -15,3 +15,9 @@ impl Filter {
         matches!(self, Filter::Input(_) | Filter::Value(_))
     }
 }
+
+impl Default for Filter {
+    fn default() -> Self {
+        Filter::Disabled
+    }
+}

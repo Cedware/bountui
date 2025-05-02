@@ -19,7 +19,7 @@ pub trait ApiClient {
         &self,
         scope: &Option<String>,
     ) -> impl Future<Output = Result<Vec<Target>, Error>>;
-
+    
     fn get_sessions(&self, scope: &str) -> impl Future<Output = Result<Vec<Session>, Error>>;
 
     fn connect(

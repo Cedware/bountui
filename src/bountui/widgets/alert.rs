@@ -1,28 +1,24 @@
-use ratatui::layout::{Alignment, Constraint, Flex, Layout};
-use ratatui::style::Stylize;
-use ratatui::text::{Line, Span};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
+use ratatui::prelude::{Line, Span, Stylize, Widget};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
-use ratatui::Frame;
 
 pub struct Alert {
     title: String,
-    message: String,
+    message: String
 }
 
 impl Alert {
-    pub fn new<T, M>(title: T, message: M) -> Self
-    where
-        T: Into<String>,
-        M: Into<String>,
-    {
-        Self {
-            title: title.into(),
-            message: message.into(),
-        }
+    pub fn new(title: String, message: String) -> Self {
+        Self { title, message }
     }
+}
 
-    pub fn render(&self, frame: &mut Frame) {
-        let area = frame.area();
+impl Widget for Alert {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized
+    {
         let vertical = Layout::vertical([Constraint::Percentage(25)]).flex(Flex::Center);
         let horizontal = Layout::horizontal([Constraint::Percentage(25)]).flex(Flex::Center);
         let [area] = vertical.areas(area);
@@ -41,7 +37,7 @@ impl Alert {
             Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .areas(block.inner(area));
+            .areas(block.inner(area));
 
         let lines: Vec<Line> = self.message.lines().map(Line::raw).collect();
         let paragraph = Paragraph::new(lines)
@@ -51,9 +47,10 @@ impl Alert {
         let ok_buttons = Span::from("    Ok    ").bold().reversed();
         let button_paragraph = Paragraph::new(Line::from(ok_buttons)).alignment(Alignment::Center);
 
-        frame.render_widget(Clear, area);
-        frame.render_widget(block, area);
-        frame.render_widget(paragraph, text_area);
-        frame.render_widget(button_paragraph, button_area);
+
+        Clear.render(area, buf);
+        block.render(area, buf);
+        paragraph.render(text_area, buf);
+        button_paragraph.render(button_area, buf);
     }
 }
