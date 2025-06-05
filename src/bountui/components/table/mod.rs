@@ -4,6 +4,8 @@ pub mod scope;
 pub mod sessions;
 pub mod target;
 
+use std::cell::{Cell, RefCell};
+use std::cmp::{max, min};
 use crossterm::event::{Event, KeyCode};
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
@@ -11,7 +13,7 @@ use ratatui::style::{Color, Style, Stylize};
 use crate::bountui::components::table::filter::Filter;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::block::{Position, Title};
-use ratatui::widgets::{Block, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
 use std::rc::Rc;
 use ratatui::prelude::Rect;
@@ -55,38 +57,45 @@ pub struct TablePage<T> {
     columns: Vec<TableColumn<T>>,
     items: Vec<Rc<T>>,
     visible_items: Vec<Rc<T>>,
-    selected: Option<usize>,
+    table_state: RefCell<TableState>,
     filter: Filter,
     message_tx: mpsc::Sender<Message>,
-    actions: Vec<Action<T>>
+    actions: Vec<Action<T>>,
+    page_size: Cell<usize>,
 }
 impl<T> TablePage<T> where Self: SortItems<T> {
     pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, actions: Vec<Action<T>>, message_tx: mpsc::Sender<Message>) -> Self {
         let mut items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
         Self::sort(&mut items);
         let visible_items: Vec<Rc<T>> = items.iter().cloned().collect();
-        let selected = if visible_items.is_empty() { None } else { Some(0) };
-        TablePage {
+        let mut table_page = TablePage {
             title,
             columns,
             items,
             visible_items,
-            selected,
+            table_state: RefCell::new(TableState::default()),
             filter: Filter::Disabled,
             actions,
-            message_tx
-        }
+            message_tx,
+            page_size: Cell::new(0),
+        };
+        table_page.select_first_or_none();
+        table_page
     }
-    
+
+    fn select_first_or_none(&mut self) {
+        self.table_state.borrow_mut().select(if self.visible_items.is_empty() { None } else { Some(0) });
+    }
+
     pub fn set_items(&mut self, items: Vec<T>) {
         self.items = items.into_iter().map(Rc::new).collect();
         Self::sort(&mut self.items);
         self.visible_items = self.items.iter().cloned().collect();
-        self.selected = if self.visible_items.is_empty() { None } else { Some(0) };
+        self.select_first_or_none();
     }
 
     pub fn selected_item(&self) -> Option<Rc<T>> {
-        self.selected
+        self.table_state.borrow_mut().selected()
             .map(|i| self.visible_items.get(i).cloned())
             .flatten()
     }
@@ -94,7 +103,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
     fn reset_filter(&mut self) {
         self.filter = Filter::Disabled;
         self.visible_items = self.items.iter().cloned().collect();
-        self.selected = Some(0);
+        self.select_first_or_none();
     }
 
     fn update_filter(&mut self, event: &Event) where TablePage<T>: FilterItems<T>  {
@@ -107,23 +116,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
                 .filter(|i| Self::matches(i.as_ref(), &value))
                 .map(Rc::clone)
                 .collect();
-            self.selected = Some(0);
-        }
-    }
-
-    fn select_next(&mut self) {
-        if let Some(selected_index) = self.selected {
-            if selected_index < self.visible_items.len() - 1 {
-                self.selected = Some(selected_index + 1);
-            }
-        }
-    }
-
-    fn select_previous(&mut self) {
-        if let Some(selected_index) = self.selected {
-            if selected_index > 0 {
-                self.selected = Some(selected_index - 1);
-            }
+            self.select_first_or_none();
         }
     }
 
@@ -141,6 +134,20 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         if let Filter::Input(filter_input) = &self.filter {
             self.filter = Filter::Value(filter_input.value().to_string());
         }
+    }
+
+    fn next_page(&self) {
+        let mut table_state = self.table_state.borrow_mut();
+        let new_selected = min(table_state.offset() + self.page_size.get(), self.visible_items.len() - 1);
+        *table_state.offset_mut() = min(new_selected, self.visible_items.len().saturating_sub(self.page_size.get()
+        ));
+        table_state.select(Some(new_selected));
+    }
+    fn previous_page(&self) {
+        let mut table_state = self.table_state.borrow_mut();
+        let new_selected = max(table_state.offset().saturating_sub(self.page_size.get()), 0);
+        *table_state.offset_mut() = new_selected;
+        table_state.select(Some(new_selected));
     }
 
     fn instructions(&self) -> Title
@@ -239,26 +246,35 @@ impl<T> TablePage<T> where Self: SortItems<T> {
                     }
                 }
                 KeyCode::Up => {
-                    self.select_previous();
+                    self.table_state.borrow_mut().select_previous();
                     return true;
                 }
                 KeyCode::Down => {
-                    self.select_next();
+                    self.table_state.borrow_mut().select_next();
                     return true;
-                }
+                },
+                KeyCode::PageDown => {
+                    self.next_page();
+                    return true;
+                },
+                KeyCode::PageUp => {
+                    self.previous_page();
+                    return true;
+                },
                 KeyCode::Char('/') => {
                     self.show_filter();
                     return true;
-                }
+                },
                 _ => {} // Event not handled by basic navigation/filtering
             }
         }
-        
+
         // If we reach here, the event was not handled by the table page itself.
         false
     }
 
     pub fn view(&self, frame: &mut Frame, area: Rect) {
+
         let layout_constraints = if self.filter.is_input() {
             [Constraint::Length(3), Constraint::Fill(1)]
         } else {
@@ -266,6 +282,8 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         };
 
         let [search_area, table_area] = Layout::vertical(layout_constraints).areas(area);
+
+        self.page_size.set(table_area.height as usize - 3);
 
         if let Filter::Input(search) = &self.filter {
             let block = Block::bordered().light_blue().on_black();
@@ -275,9 +293,8 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             frame.render_widget(paragraph, search_area);
         }
 
-        let mut table_state = ratatui::widgets::TableState::new();
-        table_state.select(self.selected);
-        frame.render_stateful_widget(self.table(), table_area, &mut table_state);
+
+        frame.render_stateful_widget(self.table(), table_area, &mut self.table_state.borrow_mut());
     }
 
     pub fn is_filter_input_active(&self) -> bool {
