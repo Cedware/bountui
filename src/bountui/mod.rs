@@ -1,6 +1,6 @@
 use crate::boundary;
 use crate::bountui::components::table::scope::ScopesPage;
-use crate::bountui::components::table::sessions::{ReloadScopeSessions, SessionsPage};
+use crate::bountui::components::table::sessions::{ReloadScopeSessions, SessionsPage, SessionsPageMessage};
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::connection_manager::ConnectionManager;
 use crate::bountui::widgets::Alert;
@@ -36,7 +36,7 @@ pub enum Message {
     GoBack,
     ShowAlert(String, String),
     Targets(TargetsPageMessage),
-    SessionsChanged(Vec<boundary::Session>),
+    SessionsPage(SessionsPageMessage)
 }
 
 impl Message {
@@ -156,12 +156,6 @@ where
         }
     }
 
-    fn handle_session_changed(&mut self, sessions: Vec<boundary::Session>) {
-        if let Page::ScopeSessions(sessions_page) = &mut self.page {
-            sessions_page.set_sessions(sessions);
-        }
-    }
-
     async fn connect(
         &mut self,
         target_id: &String,
@@ -268,8 +262,10 @@ where
                     targets_page.handle_message(targets_message);
                 }
             },
-            Message::SessionsChanged(sessions_page) => {
-                self.handle_session_changed(sessions_page);
+            Message::SessionsPage(msg) => {
+                if let Page::ScopeSessions(sessions_page) = &mut self.page {
+                    sessions_page.handle_message(msg);
+                }
             }
         }
     }

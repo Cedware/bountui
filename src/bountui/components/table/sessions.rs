@@ -135,9 +135,15 @@ impl<R: ReloadSessions + Send + Sync + 'static> SessionsPage<R> {
         }
     }
 
-    pub fn set_sessions(&mut self, sessions: Vec<Session>) {
-        self.table_page.set_items(sessions);
+    pub fn handle_message(&mut self, message: SessionsPageMessage) {
+        match message {
+            SessionsPageMessage::SessionsLoaded(sessions) => {
+                self.table_page.set_items(sessions);
+            }
+        }
     }
+
+
 }
 
 impl FilterItems<Session> for TablePage<Session> {
@@ -167,7 +173,7 @@ pub trait ReloadSessions: Send + Sync {
             match self.fetch_sessions().await {
                 Ok(sessions) => {
                     self.message_tx()
-                        .send(Message::SessionsChanged(sessions))
+                        .send(SessionsPageMessage::SessionsLoaded(sessions).into())
                         .await
                         .unwrap();
                 }
@@ -232,5 +238,17 @@ impl<B: boundary::ApiClient + Send + Sync + 'static> ReloadSessions for ReloadUs
 
     fn message_tx(&self) -> &Sender<Message> {
         &self.message_tx
+    }
+}
+
+
+#[derive(Clone, Debug)]
+pub enum SessionsPageMessage {
+    SessionsLoaded(Vec<Session>),
+}
+
+impl From<SessionsPageMessage> for Message {
+    fn from(msg: SessionsPageMessage) -> Self {
+        Message::SessionsPage(msg)
     }
 }
