@@ -31,9 +31,11 @@ async fn main() {
     let boundary_client = boundary::CliClient::default();
     let connection_manager = bountui::connection_manager::ConnectionManager::new(boundary_client.clone());
     let auth_result = boundary_client.authenticate().await.unwrap();
-    env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token);
 
-    let mut app = BountuiApp::new(boundary_client, connection_manager, send_message).await;
+    //This is safe because this is the only place we set the environment variable
+    unsafe { env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token) };
+
+    let mut app = BountuiApp::new(boundary_client, auth_result.attributes.user_id, connection_manager, send_message).await;
     let mut terminal = ratatui::init();
     terminal.clear().unwrap();
 

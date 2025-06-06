@@ -11,25 +11,33 @@ use tokio_util::sync::CancellationToken;
 
 #[automock]
 pub trait ApiClient {
-    fn get_scopes(
+    async fn get_scopes(
         &self,
         parent: &Option<String>,
-    ) -> impl Future<Output = Result<Vec<Scope>, Error>>;
-    fn get_targets(
+        recursive: bool,
+    ) -> Result<Vec<Scope>, Error>;
+    async fn get_targets(
         &self,
         scope: &Option<String>,
-    ) -> impl Future<Output = Result<Vec<Target>, Error>>;
-    
-    fn get_sessions(&self, scope: &str) -> impl Future<Output = Result<Vec<Session>, Error>>;
+    ) -> Result<Vec<Target>, Error>;
 
-    fn connect(
+    fn get_sessions(&self, scope: &str) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync;
+
+    #[warn(dead_code)]
+    fn get_user_sessions(
+        &self,
+        user_id: &str,
+    ) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync;
+
+    async fn connect(
         &self,
         target_id: &str,
         port: u16,
         cancellation_token: CancellationToken,
-    ) -> impl Future<Output = Result<ConnectResponse, Error>>;
+    ) -> Result<ConnectResponse, Error>;
 
-    fn cancel_session(&self, session_id: &str) -> impl Future<Output = Result<Session, Error>>;
+    async fn cancel_session(&self, session_id: &str) -> Result<Session, Error>;
 
-    fn authenticate(&self) -> impl Future<Output = Result<AuthenticateResponse, Error>>;
+    async fn authenticate(&self) -> Result<AuthenticateResponse, Error>;
+
 }

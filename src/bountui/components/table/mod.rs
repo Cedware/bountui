@@ -91,7 +91,13 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         self.items = items.into_iter().map(Rc::new).collect();
         Self::sort(&mut self.items);
         self.visible_items = self.items.iter().cloned().collect();
-        self.select_first_or_none();
+        let selected_optional = self.table_state.borrow().selected();
+        if let Some(selected) = selected_optional {
+            if selected >= self.items.len() {
+                self.select_first_or_none();
+            }
+        }
+
     }
 
     pub fn selected_item(&self) -> Option<Rc<T>> {
@@ -295,10 +301,6 @@ impl<T> TablePage<T> where Self: SortItems<T> {
 
 
         frame.render_stateful_widget(self.table(), table_area, &mut self.table_state.borrow_mut());
-    }
-
-    pub fn is_filter_input_active(&self) -> bool {
-        self.filter.is_input()
     }
 
 }

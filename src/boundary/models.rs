@@ -90,6 +90,7 @@ pub struct Session {
     pub created_time: DateTime<Utc>,
     pub status: String,
     pub authorized_actions: Vec<String>,
+    pub user_id: String,
 }
 
 impl Session {
