@@ -24,8 +24,8 @@ that require interaction with the terminal (e.g., password prompts) will **not**
 |-----------------------|-----------------|
 | OIDC                  | ✅ Supported     |
 | Password              | ❌ Not Supported |
-| Auth Tokens           | ⚠️ Untested     |
-| LDAP                  | ⚠️ Untested     |
+| Auth Tokens           | ❌ Not Supported |
+| LDAP                  | ❌ Not Supported |
 
 ---
 
@@ -38,7 +38,8 @@ bountui has been tested with **Boundary 0.17.x**. Other versions may work but ar
 | < 0.17.x         | ⚠️ Untested   |
 | 0.17.x           | ✅ Supported   |
 | 0.18.x           | ✅ Supported   |
-| \> 0.18.x        | ⚠️ Untested   |
+| 0.19.x           | ✅ Supported   |
+| \> 0.19.x        | ⚠️ Untested   |
 
 ---
 
