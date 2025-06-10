@@ -63,9 +63,15 @@ pub struct Credential {
     pub password: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq,)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CredentialSource {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CredentialEntry {
     pub credential: Credential,
+    pub credential_source: CredentialSource,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -90,5 +96,17 @@ pub struct Session {
 impl Session {
     pub fn can_cancel(&self) -> bool {
         self.authorized_actions.contains(&"cancel:self".to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionWithTarget {
+    pub session: Session,
+    pub target: Target,
+}
+
+impl SessionWithTarget {
+    pub fn new(session: Session, target: Target) -> SessionWithTarget {
+        SessionWithTarget { session, target }
     }
 }

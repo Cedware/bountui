@@ -33,20 +33,22 @@ impl Child for tokio::process::Child {
 }
 
 #[automock(type Child = MockChild;)]
-pub trait CommandRunner {
+pub trait CommandRunner: Send + Sync + 'static {
     type Child: Child;
-    fn output(&self, command: &mut Command) -> impl Future<Output=io::Result<Output>>;
+    fn output(&self, command: &mut Command) -> impl Future<Output=io::Result<Output>> + Send + Sync;
     fn spawn(&self, command: &mut Command) -> io::Result<Self::Child>;
 }
 
+#[derive(Copy, Clone)]
 pub struct DefaultCommandRunner;
+
 
 impl CommandRunner for DefaultCommandRunner {
 
     type Child = tokio::process::Child;
 
-    fn output(&self, command: &mut Command) -> impl Future<Output=io::Result<Output>> {
-        command.output()
+    async fn output(&self, command: &mut Command) -> io::Result<Output> {
+        command.output().await
     }
 
     fn spawn(&self, command: &mut Command) -> io::Result<tokio::process::Child> {

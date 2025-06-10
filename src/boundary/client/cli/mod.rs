@@ -69,13 +69,16 @@ impl <R> CliClient<R> {
     }
 }
 
-impl <R> ApiClient for CliClient<R> where R: CommandRunner, R::Child: Send + 'static, <<R as CommandRunner>::Child as Child>::Stdout : Unpin {
-    async fn get_scopes(&self, parent: &Option<String>) -> Result<Vec<Scope>, Error> {
+impl <R> ApiClient for CliClient<R> where R: CommandRunner + Send + Sync + 'static, R::Child: Send + Sync + 'static, <<R as CommandRunner>::Child as Child>::Stdout : Unpin + Send + Sync + 'static {
+    async fn get_scopes(&self, parent: Option<&str>, recursive: bool) -> Result<Vec<Scope>, Error> {
         let mut args = vec!["scopes", "list", "-format", "json"];
         parent.iter().for_each(|p| {
             args.push("-scope-id");
             args.push(p);
         });
+        if recursive {
+            args.push("-recursive");
+        }
         let mut command = tokio::process::Command::new(&self.bin_path);
         let configured_command = command.args(&args);
         let output = self.command_runner.output(configured_command).await?;
@@ -83,12 +86,18 @@ impl <R> ApiClient for CliClient<R> where R: CommandRunner, R::Child: Send + 'st
         response.map(|r: ListResponse<Scope>| r.items.unwrap_or_default())
     }
 
-    async fn get_targets(&self, scope: &Option<String>) -> Result<Vec<Target>, Error> {
+    async fn
+    get_targets(&self, scope: Option<&str>) -> Result<Vec<Target>, Error> {
         let mut args = vec!["targets", "list", "-format", "json"];
-        scope.iter().for_each(|s| {
-            args.push("-scope-id");
-            args.push(s);
-        });
+        match scope {
+            Some(scope) => {
+                args.push("-scope-id");
+                args.push(scope);
+            },
+            None => {
+                args.push("-recursive");
+            }
+        }
         let mut command = tokio::process::Command::new(&self.bin_path);
         let configured_command = command.args(&args);
         let output = self.command_runner.output(configured_command).await?;
@@ -103,6 +112,28 @@ impl <R> ApiClient for CliClient<R> where R: CommandRunner, R::Child: Send + 'st
         let output = self.command_runner.output(configured_command).await?;
         let result = self.get_result_from_output(&output);
         result.map(|r: ListResponse<Session>| r.items.unwrap_or_default())
+    }
+
+    async fn get_user_sessions(&self, user_id: &str) -> Result<Vec<Session>, Error> {
+        let scopes = self.get_scopes(None, true).await?
+            .into_iter().filter(|s| s.authorized_collection_actions.get("sessions").map(|action| action.contains(&"list".to_string())).unwrap_or(false))
+            .collect::<Vec<_>>();
+        let results = futures::future::join_all(
+            scopes.iter().map(|scope| {
+                let scope_id = &scope.id;
+                self.get_sessions(scope_id)
+            })
+        ).await;
+        let mut sessions = Vec::new();
+        for result in results {
+            match result {
+                Ok(session_list) => {
+                    sessions.append(&mut session_list.into_iter().filter(|s| s.user_id == user_id).collect::<Vec<_>>());
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(sessions)
     }
 
     async fn connect(
@@ -227,7 +258,7 @@ mod test {
             command_runner
         };
 
-        let scopes = client.get_scopes(&None).await.unwrap();
+        let scopes = client.get_scopes(None, false).await.unwrap();
         assert_eq!(scopes, response.items.unwrap());
     }
 
