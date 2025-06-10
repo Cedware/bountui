@@ -87,7 +87,7 @@ where
     where
         C: boundary::ApiClient,
     {
-        let scopes = boundary_client.get_scopes(&None, false).await.unwrap();
+        let scopes = boundary_client.get_scopes(None, false).await.unwrap();
         let page = Page::Scopes(ScopesPage::new(scopes, send_message.clone()));
         BountuiApp {
             boundary_client,
@@ -118,7 +118,7 @@ where
         None
     }
 
-    async fn show_scope(&mut self, parent: &Option<String>) {
+    async fn show_scope(&mut self, parent: Option<&str>) {
         match self.boundary_client.get_scopes(parent, false).await {
             Ok(scopes) => {
                 self.navigate_to(
@@ -132,7 +132,7 @@ where
         }
     }
 
-    async fn show_targets(&mut self, parent: &Option<String>) {
+    async fn show_targets(&mut self, parent: Option<&str>) {
         match self.boundary_client.get_targets(parent).await {
             Ok(targets) => {
                 self.navigate_to(
@@ -150,7 +150,7 @@ where
 
     async fn navigate_to_scope_tree(&mut self) {
         self.navigation_input = None;
-        let scopes = self.boundary_client.get_scopes(&None, false).await;
+        let scopes = self.boundary_client.get_scopes(None, false).await;
         match scopes {
             Ok(scopes) => {
                 self.navigate_to(
@@ -286,8 +286,8 @@ where
 
     pub async fn handle_message(&mut self, message: Message) {
         match message {
-            Message::ShowScopes { parent } => self.show_scope(&parent).await,
-            Message::ShowTargets { parent } => self.show_targets(&parent).await,
+            Message::ShowScopes { parent } => self.show_scope(parent.as_deref()).await,
+            Message::ShowTargets { parent } => self.show_targets(parent.as_deref()).await,
             Message::Connect { target_id, port } => self.connect(&target_id, port).await,
             Message::ShowSessions {
                 scope,

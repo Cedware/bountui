@@ -98,3 +98,15 @@ impl Session {
         self.authorized_actions.contains(&"cancel:self".to_string())
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct SessionWithTarget {
+    pub session: Session,
+    pub target: Target,
+}
+
+impl SessionWithTarget {
+    pub fn new(session: Session, target: Target) -> SessionWithTarget {
+        SessionWithTarget { session, target }
+    }
+}

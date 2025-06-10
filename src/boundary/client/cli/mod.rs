@@ -70,7 +70,7 @@ impl <R> CliClient<R> {
 }
 
 impl <R> ApiClient for CliClient<R> where R: CommandRunner + Send + Sync + 'static, R::Child: Send + Sync + 'static, <<R as CommandRunner>::Child as Child>::Stdout : Unpin + Send + Sync + 'static {
-    async fn get_scopes(&self, parent: &Option<String>, recursive: bool) -> Result<Vec<Scope>, Error> {
+    async fn get_scopes(&self, parent: Option<&str>, recursive: bool) -> Result<Vec<Scope>, Error> {
         let mut args = vec!["scopes", "list", "-format", "json"];
         parent.iter().for_each(|p| {
             args.push("-scope-id");
@@ -86,12 +86,18 @@ impl <R> ApiClient for CliClient<R> where R: CommandRunner + Send + Sync + 'stat
         response.map(|r: ListResponse<Scope>| r.items.unwrap_or_default())
     }
 
-    async fn get_targets(&self, scope: &Option<String>) -> Result<Vec<Target>, Error> {
+    async fn
+    get_targets(&self, scope: Option<&str>) -> Result<Vec<Target>, Error> {
         let mut args = vec!["targets", "list", "-format", "json"];
-        scope.iter().for_each(|s| {
-            args.push("-scope-id");
-            args.push(s);
-        });
+        match scope {
+            Some(scope) => {
+                args.push("-scope-id");
+                args.push(scope);
+            },
+            None => {
+                args.push("-recursive");
+            }
+        }
         let mut command = tokio::process::Command::new(&self.bin_path);
         let configured_command = command.args(&args);
         let output = self.command_runner.output(configured_command).await?;
@@ -109,7 +115,7 @@ impl <R> ApiClient for CliClient<R> where R: CommandRunner + Send + Sync + 'stat
     }
 
     async fn get_user_sessions(&self, user_id: &str) -> Result<Vec<Session>, Error> {
-        let scopes = self.get_scopes(&None, true).await?
+        let scopes = self.get_scopes(None, true).await?
             .into_iter().filter(|s| s.authorized_collection_actions.get("sessions").map(|action| action.contains(&"list".to_string())).unwrap_or(false))
             .collect::<Vec<_>>();
         let results = futures::future::join_all(
@@ -252,7 +258,7 @@ mod test {
             command_runner
         };
 
-        let scopes = client.get_scopes(&None, false).await.unwrap();
+        let scopes = client.get_scopes(None, false).await.unwrap();
         assert_eq!(scopes, response.items.unwrap());
     }
 

@@ -1,5 +1,5 @@
 use crate::boundary;
-use crate::boundary::{ApiClient, Error, Session};
+use crate::boundary::{ApiClient, ApiClientExt, Error, SessionWithTarget};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 
 pub struct SessionsPage<R: LoadSessions + Send + 'static> {
-    table_page: TablePage<boundary::Session>,
+    table_page: TablePage<boundary::SessionWithTarget>,
     message_tx: mpsc::Sender<Message>,
     reload_join_handle: tokio::task::JoinHandle<()>,
     reload_now_tx: mpsc::Sender<()>,
@@ -30,28 +30,33 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
         let columns = vec![
             TableColumn::new(
                 "Id".to_string(),
-                Constraint::Ratio(1, 5),
-                Box::new(|s: &boundary::Session| s.id.clone()),
+                Constraint::Ratio(1, 6),
+                Box::new(|s: &boundary::SessionWithTarget| s.session.id.clone()),
+            ),
+            TableColumn::new(
+                "Target name".to_string(),
+                Constraint::Ratio(1, 6),
+                Box::new(|s| s.target.name.clone()),
             ),
             TableColumn::new(
                 "Target".to_string(),
-                Constraint::Ratio(1, 5),
-                Box::new(|s| s.target_id.clone()),
+                Constraint::Ratio(1, 6),
+                Box::new(|s| s.target.id.clone()),
             ),
             TableColumn::new(
                 "Type".to_string(),
-                Constraint::Ratio(1, 5),
-                Box::new(|s| s.session_type.clone()),
+                Constraint::Ratio(1, 6),
+                Box::new(|s| s.session.session_type.clone()),
             ),
             TableColumn::new(
                 "Status".to_string(),
-                Constraint::Ratio(1, 5),
-                Box::new(|s| s.status.clone()),
+                Constraint::Ratio(1, 6),
+                Box::new(|s| s.session.status.clone()),
             ),
             TableColumn::new(
                 "Created Time".to_string(),
-                Constraint::Ratio(1, 5),
-                Box::new(|s| s.created_time.to_string()),
+                Constraint::Ratio(1, 6),
+                Box::new(|s| s.session.created_time.to_string()),
             ),
         ];
 
@@ -59,21 +64,21 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
             Action::new(
                 "Quit".to_string(),
                 "Ctrl + C".to_string(),
-                Box::new(|_: Option<&Session>| true),
+                Box::new(|_: Option<&SessionWithTarget>| true),
             ),
             Action::new(
                 "Back".to_string(),
                 "ESC".to_string(),
-                Box::new(|_: Option<&Session>| true),
+                Box::new(|_: Option<&SessionWithTarget>| true),
             ),
             Action::new(
                 "Stop Session".to_string(),
                 "d".to_string(), // Note: Shortcut display only, actual handling is separate
-                Box::new(|item: Option<&Session>| item.map_or(false, |s| s.can_cancel())),
+                Box::new(|item: Option<&SessionWithTarget>| item.map_or(false, |s| s.session.can_cancel())),
             ),
         ];
 
-        let sessions = load_sessions.fetch_sessions_or_show_error().await.unwrap_or(Vec::new());
+        let sessions:Vec<SessionWithTarget> = load_sessions.fetch_sessions_or_show_error().await.unwrap_or(Vec::new());
         let table_page = TablePage::new(
             "Sessions".to_string(),
             columns,
@@ -112,7 +117,7 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
         if let Some(session) = self.table_page.selected_item() {
             self.message_tx
                 .send(Message::StopSession {
-                    session_id: session.id.clone(),
+                    session_id: session.session.id.clone(),
                     notify_stopped_tx: self.reload_now_tx.clone(),
                 })
                 .await
@@ -146,19 +151,20 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
     }
 }
 
-impl FilterItems<Session> for TablePage<Session> {
-    fn matches(item: &Session, search: &str) -> bool {
-        Self::match_str(&item.id, search)
-            || Self::match_str(&item.target_id, search)
-            || Self::match_str(&item.session_type, search)
-            || Self::match_str(&item.status, search)
-            || Self::match_str(&item.created_time.to_string(), search)
+impl FilterItems<SessionWithTarget> for TablePage<SessionWithTarget> {
+    fn matches(item: &SessionWithTarget, search: &str) -> bool {
+        Self::match_str(&item.session.id, search)
+            || Self::match_str(&item.target.id, search)
+            || Self::match_str(&item.target.name, search)
+            || Self::match_str(&item.session.session_type, search)
+            || Self::match_str(&item.session.status, search)
+            || Self::match_str(&item.session.created_time.to_string(), search)
     }
 }
 
-impl SortItems<Session> for TablePage<Session> {
-    fn sort(items: &mut Vec<Rc<Session>>) {
-        items.sort_by(|a, b| a.created_time.cmp(&b.created_time));
+impl SortItems<SessionWithTarget> for TablePage<SessionWithTarget> {
+    fn sort(items: &mut Vec<Rc<SessionWithTarget>>) {
+        items.sort_by(|a, b| a.session.created_time.cmp(&b.session.created_time));
     }
 }
 
@@ -171,18 +177,19 @@ impl<R: LoadSessions> Drop for SessionsPage<R> {
 pub trait LoadSessions: Send + Sync {
     fn fetch_sessions(
         &self,
-    ) -> impl Future<Output = Result<Vec<boundary::Session>, boundary::Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<boundary::SessionWithTarget>, boundary::Error>> + Send;
 
     fn message_tx(&self) -> &Sender<Message>;
 
-    fn fetch_sessions_or_show_error(&self) -> impl Future<Output = Option<Vec<Session>>> + Send {
+    fn fetch_sessions_or_show_error(&self) -> impl Future<Output = Option<Vec<SessionWithTarget>>> + Send {
         async {
             match self.fetch_sessions().await {
                 Ok(sessions) => Some(sessions),
                 Err(e) => {
                     let _ = self
                         .message_tx()
-                        .send(Message::show_error("Error loading sessions", e));
+                        .send(Message::show_error("Error loading sessions", e))
+                        .await;
                     None
                 }
             }
@@ -225,14 +232,14 @@ impl<B: boundary::ApiClient + Send + Sync> LoadTargetSessionsSessions<B> {
 }
 
 impl<B: ApiClient + Send + Sync + 'static> LoadSessions for LoadTargetSessionsSessions<B> {
-    async fn fetch_sessions(&self) -> Result<Vec<Session>, Error> {
+    async fn fetch_sessions(&self) -> Result<Vec<SessionWithTarget>, Error> {
         self.boundary_client
-            .get_sessions(&self.scope_id)
+            .get_sessions_with_target(&self.scope_id)
             .await
             .map(|sessions| {
                 sessions
                     .into_iter()
-                    .filter(|s| s.target_id == self.target_id)
+                    .filter(|s| s.target.id == self.target_id)
                     .collect()
             })
     }
@@ -259,8 +266,8 @@ impl<B: boundary::ApiClient> LoadUserSessions<B> {
 }
 
 impl<B: boundary::ApiClient + Send + Sync + 'static> LoadSessions for LoadUserSessions<B> {
-    async fn fetch_sessions(&self) -> Result<Vec<Session>, Error> {
-        self.boundary_client.get_user_sessions(&self.user_id).await
+    async fn fetch_sessions(&self) -> Result<Vec<SessionWithTarget>, Error> {
+        self.boundary_client.get_user_sessions_with_target(&self.user_id).await
     }
 
     fn message_tx(&self) -> &Sender<Message> {
@@ -270,7 +277,7 @@ impl<B: boundary::ApiClient + Send + Sync + 'static> LoadSessions for LoadUserSe
 
 #[derive(Clone, Debug)]
 pub enum SessionsPageMessage {
-    SessionsLoaded(Vec<Session>),
+    SessionsLoaded(Vec<SessionWithTarget>),
 }
 
 impl From<SessionsPageMessage> for Message {
