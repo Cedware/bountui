@@ -1,4 +1,3 @@
-use std::future::Future;
 use crate::boundary;
 use crate::boundary::{ApiClient, Error, Session};
 use crate::bountui::components::table::action::Action;
@@ -6,15 +5,16 @@ use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
 use crossterm::event::Event;
-use ratatui::layout::Constraint;
+use ratatui::layout::{Constraint, Rect};
 use ratatui::Frame;
+use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 
-pub struct SessionsPage<R: ReloadSessions + Send + 'static> {
+pub struct SessionsPage<R: LoadSessions + Send + 'static> {
     table_page: TablePage<boundary::Session>,
     message_tx: mpsc::Sender<Message>,
     reload_join_handle: tokio::task::JoinHandle<()>,
@@ -22,10 +22,9 @@ pub struct SessionsPage<R: ReloadSessions + Send + 'static> {
     marker: std::marker::PhantomData<R>,
 }
 
-impl<R: ReloadSessions + Send + Sync + 'static> SessionsPage<R> {
-    pub fn new(
-        sessions: Vec<Session>,
-        reload_sessions: R,
+impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
+    pub async fn new(
+        load_sessions: L,
         message_tx: mpsc::Sender<Message>,
     ) -> Self {
         let columns = vec![
@@ -74,6 +73,7 @@ impl<R: ReloadSessions + Send + Sync + 'static> SessionsPage<R> {
             ),
         ];
 
+        let sessions = load_sessions.fetch_sessions_or_show_error().await.unwrap_or(Vec::new());
         let table_page = TablePage::new(
             "Sessions".to_string(),
             columns,
@@ -87,13 +87,16 @@ impl<R: ReloadSessions + Send + Sync + 'static> SessionsPage<R> {
         SessionsPage {
             table_page,
             message_tx,
-            reload_join_handle: Self::reload_task(reload_sessions, reload_now_rx),
+            reload_join_handle: Self::reload_task(load_sessions, reload_now_rx),
             reload_now_tx,
             marker: std::marker::PhantomData,
         }
     }
 
-    fn reload_task(reload_sessions: R, mut reload_now_rx: mpsc::Receiver<()>) -> tokio::task::JoinHandle<()> {
+    fn reload_task(
+        reload_sessions: L,
+        mut reload_now_rx: mpsc::Receiver<()>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 reload_sessions.update_sessions().await;
@@ -114,12 +117,11 @@ impl<R: ReloadSessions + Send + Sync + 'static> SessionsPage<R> {
                 })
                 .await
                 .unwrap();
-        
         }
     }
 
-    pub fn view(&self, frame: &mut Frame) {
-        self.table_page.view(frame, frame.area());
+    pub fn view(&self, frame: &mut Frame, area: Rect) {
+        self.table_page.view(frame, area);
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
@@ -142,8 +144,6 @@ impl<R: ReloadSessions + Send + Sync + 'static> SessionsPage<R> {
             }
         }
     }
-
-
 }
 
 impl FilterItems<Session> for TablePage<Session> {
@@ -162,52 +162,79 @@ impl SortItems<Session> for TablePage<Session> {
     }
 }
 
+impl<R: LoadSessions> Drop for SessionsPage<R> {
+    fn drop(&mut self) {
+        self.reload_join_handle.abort();
+    }
+}
 
-pub trait ReloadSessions: Send + Sync {
-    fn fetch_sessions(&self) -> impl Future<Output = Result<Vec<boundary::Session>, boundary::Error>> + Send;
+pub trait LoadSessions: Send + Sync {
+    fn fetch_sessions(
+        &self,
+    ) -> impl Future<Output = Result<Vec<boundary::Session>, boundary::Error>> + Send;
 
-    fn message_tx(&self) -> &mpsc::Sender<Message>;
+    fn message_tx(&self) -> &Sender<Message>;
 
-    fn update_sessions(&self) -> impl Future<Output=()> + Send {
-        async move {
+    fn fetch_sessions_or_show_error(&self) -> impl Future<Output = Option<Vec<Session>>> + Send {
+        async {
             match self.fetch_sessions().await {
-                Ok(sessions) => {
-                    self.message_tx()
-                        .send(SessionsPageMessage::SessionsLoaded(sessions).into())
-                        .await
-                        .unwrap();
-                }
+                Ok(sessions) => Some(sessions),
                 Err(e) => {
                     let _ = self
                         .message_tx()
                         .send(Message::show_error("Error loading sessions", e));
+                    None
                 }
+            }
+        }
+    }
+
+    fn update_sessions(&self) -> impl Future<Output = ()> + Send {
+        async move {
+            if let Some(sessions) = self.fetch_sessions_or_show_error().await {
+                self.message_tx()
+                    .send(SessionsPageMessage::SessionsLoaded(sessions).into())
+                    .await
+                    .unwrap();
             }
         }
     }
 }
 
-
-pub struct ReloadScopeSessions<B: boundary::ApiClient> {
+pub struct LoadTargetSessionsSessions<B: boundary::ApiClient> {
     scope_id: String,
+    target_id: String,
     boundary_client: B,
     message_tx: mpsc::Sender<Message>,
 }
 
-
-impl <B: boundary::ApiClient + Send + Sync> ReloadScopeSessions<B> {
-    pub fn new(scope_id: String, boundary_client: B, message_tx: mpsc::Sender<Message>) -> Self {
-        ReloadScopeSessions {
+impl<B: boundary::ApiClient + Send + Sync> LoadTargetSessionsSessions<B> {
+    pub fn new(
+        scope_id: String,
+        target_id: String,
+        boundary_client: B,
+        message_tx: mpsc::Sender<Message>,
+    ) -> Self {
+        LoadTargetSessionsSessions {
             scope_id,
+            target_id,
             boundary_client,
             message_tx,
         }
     }
 }
 
-impl<B: ApiClient + Send + Sync + 'static> ReloadSessions for ReloadScopeSessions<B> {
+impl<B: ApiClient + Send + Sync + 'static> LoadSessions for LoadTargetSessionsSessions<B> {
     async fn fetch_sessions(&self) -> Result<Vec<Session>, Error> {
-        self.boundary_client.get_sessions(&self.scope_id).await
+        self.boundary_client
+            .get_sessions(&self.scope_id)
+            .await
+            .map(|sessions| {
+                sessions
+                    .into_iter()
+                    .filter(|s| s.target_id == self.target_id)
+                    .collect()
+            })
     }
 
     fn message_tx(&self) -> &Sender<Message> {
@@ -215,15 +242,15 @@ impl<B: ApiClient + Send + Sync + 'static> ReloadSessions for ReloadScopeSession
     }
 }
 
-struct ReloadUserUserSessions<B: boundary::ApiClient> {
+pub struct LoadUserSessions<B: boundary::ApiClient> {
     user_id: String,
     boundary_client: B,
     message_tx: mpsc::Sender<Message>,
 }
 
-impl<B: boundary::ApiClient> ReloadUserUserSessions<B> {
+impl<B: boundary::ApiClient> LoadUserSessions<B> {
     pub fn new(user_id: String, boundary_client: B, message_tx: mpsc::Sender<Message>) -> Self {
-        ReloadUserUserSessions {
+        LoadUserSessions {
             user_id,
             boundary_client,
             message_tx,
@@ -231,7 +258,7 @@ impl<B: boundary::ApiClient> ReloadUserUserSessions<B> {
     }
 }
 
-impl<B: boundary::ApiClient + Send + Sync + 'static> ReloadSessions for ReloadUserUserSessions<B> {
+impl<B: boundary::ApiClient + Send + Sync + 'static> LoadSessions for LoadUserSessions<B> {
     async fn fetch_sessions(&self) -> Result<Vec<Session>, Error> {
         self.boundary_client.get_user_sessions(&self.user_id).await
     }
@@ -240,7 +267,6 @@ impl<B: boundary::ApiClient + Send + Sync + 'static> ReloadSessions for ReloadUs
         &self.message_tx
     }
 }
-
 
 #[derive(Clone, Debug)]
 pub enum SessionsPageMessage {

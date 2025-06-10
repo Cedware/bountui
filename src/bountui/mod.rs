@@ -1,11 +1,15 @@
 use crate::boundary;
 use crate::bountui::components::table::scope::ScopesPage;
-use crate::bountui::components::table::sessions::{ReloadScopeSessions, SessionsPage, SessionsPageMessage};
+use crate::bountui::components::table::sessions::{
+    LoadTargetSessionsSessions, LoadUserSessions, SessionsPage, SessionsPageMessage,
+};
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
+use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::ConnectionManager;
 use crate::bountui::widgets::Alert;
 use crate::event_ext::EventExt;
-use crossterm::event::{Event};
+use crossterm::event::{Event, KeyCode};
+use ratatui::layout::Constraint;
 use ratatui::Frame;
 use std::fmt::Display;
 use std::mem;
@@ -36,7 +40,10 @@ pub enum Message {
     GoBack,
     ShowAlert(String, String),
     Targets(TargetsPageMessage),
-    SessionsPage(SessionsPageMessage)
+    SessionsPage(SessionsPageMessage),
+    // Navigate root pages
+    NavigateToScopeTree,
+    NavigateToMySessions,
 }
 
 impl Message {
@@ -51,7 +58,8 @@ impl Message {
 pub enum Page<B: boundary::ApiClient + Send + Sync + 'static> {
     Scopes(ScopesPage),
     Targets(TargetsPage),
-    ScopeSessions(SessionsPage<ReloadScopeSessions<B>>),
+    TargetSessions(SessionsPage<LoadTargetSessionsSessions<B>>),
+    UserSessions(SessionsPage<LoadUserSessions<B>>)
 }
 
 pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static> {
@@ -62,7 +70,8 @@ pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static> {
     alert: Option<(String, String)>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     pub is_finished: bool,
-    user_id: String
+    user_id: String,
+    navigation_input: Option<NavigationInput>,
 }
 
 impl<C> BountuiApp<C>
@@ -89,11 +98,17 @@ where
             alert: None,
             message_tx: send_message,
             is_finished: false,
+            navigation_input: None,
         }
     }
 
-    pub fn navigate_to(&mut self, page: Page<C>) {
-        self.history.push(mem::replace(&mut self.page, page));
+    pub fn navigate_to(&mut self, page: Page<C>, replace_history: bool) {
+        if replace_history {
+            self.history.clear();
+            self.page = page;
+        } else {
+            self.history.push(mem::replace(&mut self.page, page));
+        }
     }
 
     async fn stop_session(&mut self, session_id: &str) -> Option<Message> {
@@ -106,10 +121,10 @@ where
     async fn show_scope(&mut self, parent: &Option<String>) {
         match self.boundary_client.get_scopes(parent, false).await {
             Ok(scopes) => {
-                self.navigate_to(Page::Scopes(ScopesPage::new(
-                    scopes,
-                    self.message_tx.clone()
-                )));
+                self.navigate_to(
+                    Page::Scopes(ScopesPage::new(scopes, self.message_tx.clone())),
+                    false,
+                );
             }
             Err(e) => {
                 self.alert = Some(("Failed to load scopes".to_string(), format!("{:?}", e)));
@@ -120,10 +135,10 @@ where
     async fn show_targets(&mut self, parent: &Option<String>) {
         match self.boundary_client.get_targets(parent).await {
             Ok(targets) => {
-                self.navigate_to(Page::Targets(TargetsPage::new(
-                    targets,
-                    self.message_tx.clone(),
-                )));
+                self.navigate_to(
+                    Page::Targets(TargetsPage::new(targets, self.message_tx.clone())),
+                    false,
+                );
             }
             Err(e) => {
                 let _ = self
@@ -133,22 +148,37 @@ where
         }
     }
 
-    // async fn show_user_sessions(&mut self) {
-    //     match self.boundary_client.get_user_sessions(&self.user_id).await {
-    //         Ok(sessions) => {
-    //             self.navigate_to(Page::Sessions(SessionsPage::new(
-    //                 sessions,
-    //                 self.message_tx.clone(),
-    //                 ReloadScopeSessions::new()
-    //             )))
-    //         }
-    //         Err(e) => {
-    //             let _ = self
-    //                 .message_tx
-    //                 .send(Message::show_error("Failed to load user sessions", e));
-    //         }
-    //     }
-    // }
+    async fn navigate_to_scope_tree(&mut self) {
+        self.navigation_input = None;
+        let scopes = self.boundary_client.get_scopes(&None, false).await;
+        match scopes {
+            Ok(scopes) => {
+                self.navigate_to(
+                    Page::Scopes(ScopesPage::new(scopes, self.message_tx.clone())),
+                    true,
+                );
+            }
+            Err(e) => {
+                self.alert = Some(("Failed to load scopes".to_string(), format!("{:?}", e)));
+            }
+        }
+    }
+
+    async fn navigate_to_my_sessions(&mut self) {
+        self.navigation_input = None;
+        self.navigate_to(
+            Page::UserSessions(SessionsPage::new(
+                LoadUserSessions::new(
+                    self.user_id.clone(),
+                    self.boundary_client.clone(),
+                    self.message_tx.clone(),
+                ),
+                self.message_tx.clone(),
+            ).await),
+            true,
+        );
+    }
+
 
     fn go_back(&mut self) {
         if let Some(page) = self.history.pop() {
@@ -156,14 +186,15 @@ where
         }
     }
 
-    async fn connect(
-        &mut self,
-        target_id: &String,
-        port: u16
-    ) {
+    async fn connect(&mut self, target_id: &String, port: u16) {
         match self.connection_manager.connect(target_id, port).await {
             Ok(resp) => {
-                self.message_tx.send(Message::Targets(TargetsPageMessage::ConnectedToTarget(resp))).await.unwrap();
+                self.message_tx
+                    .send(Message::Targets(TargetsPageMessage::ConnectedToTarget(
+                        resp,
+                    )))
+                    .await
+                    .unwrap();
             }
             Err(e) => {
                 let _ = self
@@ -181,44 +212,75 @@ where
             );
         }
 
+        let layout_constraints = match self.navigation_input {
+            Some(_) => {
+                vec![Constraint::Length(3), Constraint::Fill(1)]
+            }
+            None => vec![Constraint::Length(0), Constraint::Fill(1)],
+        };
+
+        let [nav_input_area, content_area] =
+            ratatui::layout::Layout::vertical(layout_constraints).areas(frame.area());
+
+        if let Some(nav_input) = &self.navigation_input {
+            nav_input.view(frame, nav_input_area);
+        }
+
         match &self.page {
             Page::Scopes(scopes_page) => {
-                scopes_page.view(frame);
+                scopes_page.view(frame, content_area);
             }
             Page::Targets(targets_page) => {
-                targets_page.view(frame);
+                targets_page.view(frame, content_area);
             }
-            Page::ScopeSessions(sessions_page) => {
-                sessions_page.view(frame);
+            Page::TargetSessions(sessions_page) => {
+                sessions_page.view(frame, content_area);
+            }
+            Page::UserSessions(sessions_page) => {
+                sessions_page.view(frame, content_area);
             }
         }
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
-
         if event.is_stop() {
             self.is_finished = true;
             return;
         }
-        
+
         if self.alert.is_some() && event.is_enter() {
             self.alert = None
         }
 
-        // match event {
-        //     Event::Key(key_event) if key_event.code == KeyCode::Char('M') => {
-        //         self.show_user_sessions().await;
-        //         return;
-        //     }
-        //     _ => {}
-        // }
+        match event {
+            Event::Key(key_event) => match key_event.code {
+                KeyCode::Char(':') => {
+                    self.navigation_input = Some(NavigationInput::new(self.message_tx.clone()));
+                    return;
+                }
+                KeyCode::Esc => {
+                    if self.navigation_input.is_some() {
+                        self.navigation_input = None;
+                        return;
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        if let Some(nav_input) = &mut self.navigation_input {
+            nav_input.handle_event(event).await;
+            return;
+        }
 
         match &mut self.page {
             Page::Scopes(scopes_page) => {
                 scopes_page.handle_event(event).await;
             }
             Page::Targets(targets_page) => targets_page.handle_event(event).await,
-            Page::ScopeSessions(sessions_page) => sessions_page.handle_event(event).await,
+            Page::TargetSessions(sessions_page) => sessions_page.handle_event(event).await,
+            Page::UserSessions(sessions_page) => sessions_page.handle_event(event).await,
         }
     }
 
@@ -226,30 +288,28 @@ where
         match message {
             Message::ShowScopes { parent } => self.show_scope(&parent).await,
             Message::ShowTargets { parent } => self.show_targets(&parent).await,
-            Message::Connect {
-                target_id,
-                port,
-            } => self.connect(&target_id, port).await,
+            Message::Connect { target_id, port } => self.connect(&target_id, port).await,
             Message::ShowSessions {
                 scope,
                 target_id: target,
             } => {
-                let sessions = self
-                    .boundary_client
-                    .get_sessions(&scope)
-                    .await
-                    .unwrap()
-                    .iter()
-                    .filter(|s| s.target_id == *target)
-                    .cloned()
-                    .collect();
-                self.navigate_to(Page::ScopeSessions(SessionsPage::new(
-                    sessions,
-                    ReloadScopeSessions::new(scope, self.boundary_client.clone(), self.message_tx.clone()),
-                    self.message_tx.clone(),
-                )));
+                self.navigate_to(
+                    Page::TargetSessions(SessionsPage::new(
+                        LoadTargetSessionsSessions::new(
+                            scope,
+                            target,
+                            self.boundary_client.clone(),
+                            self.message_tx.clone(),
+                        ),
+                        self.message_tx.clone(),
+                    ).await),
+                    false,
+                );
             }
-            Message::StopSession { session_id, notify_stopped_tx } => {
+            Message::StopSession {
+                session_id,
+                notify_stopped_tx,
+            } => {
                 self.stop_session(&session_id).await;
                 let _ = notify_stopped_tx.send(()).await;
             }
@@ -261,11 +321,24 @@ where
                 if let Page::Targets(targets_page) = &mut self.page {
                     targets_page.handle_message(targets_message);
                 }
-            },
+            }
             Message::SessionsPage(msg) => {
-                if let Page::ScopeSessions(sessions_page) = &mut self.page {
-                    sessions_page.handle_message(msg);
+                match &mut self.page {
+                    Page::TargetSessions(sessions_page) => {
+                        sessions_page.handle_message(msg);
+                    },
+                    Page::UserSessions(sessions_page) => {
+                        sessions_page.handle_message(msg);
+                    },
+                    _ => {}
                 }
+
+            },
+            Message::NavigateToScopeTree => {
+                self.navigate_to_scope_tree().await;
+            },
+            Message::NavigateToMySessions => {
+                self.navigate_to_my_sessions().await;
             }
         }
     }

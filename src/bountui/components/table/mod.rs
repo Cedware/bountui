@@ -222,7 +222,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
 
     pub async fn handle_event(&mut self, event: &Event) -> bool where TablePage<T>: FilterItems<T> {
         if self.filter.is_input() {
-            let handled = match event {
+            match event {
                 Event::Key(key_event) if key_event.code == KeyCode::Enter => {
                     self.hide_filter();
                     true
@@ -234,9 +234,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
                     true
                 }
             };
-            if handled {
-                return true;
-            }
+            return true
         }
 
         if let Event::Key(key_event) = event {
@@ -244,12 +242,11 @@ impl<T> TablePage<T> where Self: SortItems<T> {
                 KeyCode::Esc => {
                     if self.filter.is_active() {
                         self.reset_filter();
-                        return true;
                     }
                     else {
                         self.go_back().await;
-                        return true;
                     }
+                    return true
                 }
                 KeyCode::Up => {
                     self.table_state.borrow_mut().select_previous();

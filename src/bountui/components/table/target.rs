@@ -11,6 +11,7 @@ use crossterm::event::{Event, KeyCode};
 use ratatui::prelude::Constraint;
 use ratatui::Frame;
 use std::rc::Rc;
+use ratatui::layout::Rect;
 
 pub enum TargetsPageMessage {
     ConnectedToTarget(ConnectResponse),
@@ -73,7 +74,7 @@ impl TargetsPage {
             ),
             Action::new(
                 "Show Sessions".to_string(),
-                "s".to_string(),
+                "Shift + C".to_string(),
                 Box::new(|item: Option<&Target>| item.is_some()), // Enabled if any target is selected
             ),
             Action::new(
@@ -92,8 +93,8 @@ impl TargetsPage {
         }
     }
 
-    pub fn view(&self, frame: &mut Frame) {
-        self.table_page.view(frame, frame.area());
+    pub fn view(&self, frame: &mut Frame, area: Rect) {
+        self.table_page.view(frame, area);
         if let Some(connect_dialog) = &self.connect_dialog {
             connect_dialog.view(frame);
         }

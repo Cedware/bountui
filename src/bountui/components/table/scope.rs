@@ -5,7 +5,7 @@ use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
 use crossterm::event::{Event, KeyCode};
-use ratatui::layout::Constraint;
+use ratatui::layout::{Constraint, Rect};
 use ratatui::Frame;
 use std::rc::Rc;
 
@@ -76,8 +76,8 @@ impl ScopesPage {
         }
     }
 
-    pub fn view(&self, frame: &mut Frame) {
-        self.table_page.view(frame, frame.area());
+    pub fn view(&self, frame: &mut Frame, area: Rect) {
+        self.table_page.view(frame, area);
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
