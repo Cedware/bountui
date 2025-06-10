@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
+use crate::bountui::components::table::util::format_title_with_parent;
 
 pub struct SessionsPage<R: LoadSessions + Send + 'static> {
     table_page: TablePage<boundary::SessionWithTarget>,
@@ -24,6 +25,7 @@ pub struct SessionsPage<R: LoadSessions + Send + 'static> {
 
 impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
     pub async fn new(
+        parent_name: Option<&str>,
         load_sessions: L,
         message_tx: mpsc::Sender<Message>,
     ) -> Self {
@@ -80,7 +82,7 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
 
         let sessions:Vec<SessionWithTarget> = load_sessions.fetch_sessions_or_show_error().await.unwrap_or(Vec::new());
         let table_page = TablePage::new(
-            "Sessions".to_string(),
+            format_title_with_parent("Sessions", parent_name),
             columns,
             sessions,
             actions,

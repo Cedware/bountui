@@ -12,6 +12,7 @@ use ratatui::prelude::Constraint;
 use ratatui::Frame;
 use std::rc::Rc;
 use ratatui::layout::Rect;
+use crate::bountui::components::table::util::format_title_with_parent;
 
 pub enum TargetsPageMessage {
     ConnectedToTarget(ConnectResponse),
@@ -37,7 +38,7 @@ pub struct TargetsPage {
 
 
 impl TargetsPage {
-    pub fn new(targets: Vec<Target>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self{
+    pub fn new(parent_name: Option<&str>, targets: Vec<Target>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self{
         let columns = vec![
             TableColumn::new(
                 "Name".to_string(),
@@ -84,7 +85,7 @@ impl TargetsPage {
             ),
         ];
 
-        let table_page = TablePage::new("Targets".to_string(), columns, targets, actions, message_tx.clone());
+        let table_page = TablePage::new(format_title_with_parent("Targets", parent_name), columns, targets, actions, message_tx.clone());
         TargetsPage {
             table_page,
             connect_dialog: None,
@@ -143,7 +144,7 @@ impl TargetsPage {
         if let Some(target) = self.table_page.selected_item() {
             self.message_tx.send(Message::ShowSessions {
                 scope: target.scope_id.clone(),
-                target_id: target.id.clone()
+                target: (*target).clone()
             }).await.unwrap();
         }
     }

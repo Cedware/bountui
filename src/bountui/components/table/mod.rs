@@ -3,6 +3,7 @@ mod filter;
 pub mod scope;
 pub mod sessions;
 pub mod target;
+mod util;
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};

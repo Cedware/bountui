@@ -3,11 +3,12 @@ use crate::boundary::Scope;
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
-use crate::bountui::Message;
+use crate::bountui::{Message};
 use crossterm::event::{Event, KeyCode};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::Frame;
 use std::rc::Rc;
+use crate::bountui::components::table::util::format_title_with_parent;
 
 pub struct ScopesPage {
     table_page: TablePage<boundary::Scope>,
@@ -15,7 +16,7 @@ pub struct ScopesPage {
 }
 
 impl ScopesPage {
-    pub fn new(scopes: Vec<Scope>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self {
+    pub fn new(parent_name: Option<&str>, scopes: Vec<Scope>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self {
         let columns = vec![
             TableColumn::new(
                 "Name".to_string(),
@@ -62,8 +63,10 @@ impl ScopesPage {
             ),
         ];
 
+
+        let title = format_title_with_parent("Scopes", parent_name);
         let table_page = TablePage::new(
-            "Scopes".to_string(),
+            title,
             columns,
             scopes,
             actions,
@@ -90,11 +93,11 @@ impl ScopesPage {
                     if let Some(scope) = self.table_page.selected_item() {
                         if scope.can_list_child_scopes() {
                             self.send_message.send(Message::ShowScopes {
-                                parent: Some(scope.id.clone())
+                                parent: Some((*scope).clone())
                             }).await.unwrap();
                         } else if scope.can_list_targets() {
                             self.send_message.send(Message::ShowTargets {
-                                parent: Some(scope.id.clone())
+                                parent: Some((*scope).clone())
                             }).await.unwrap();
                         }
                     }
@@ -118,3 +121,4 @@ impl FilterItems<Scope> for TablePage<Scope> {
             || Self::match_str(&item.id, search)
     }
 }
+

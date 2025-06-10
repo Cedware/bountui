@@ -13,21 +13,24 @@ use ratatui::layout::Constraint;
 use ratatui::Frame;
 use std::fmt::Display;
 use std::mem;
+use crate::boundary::{Scope, Target};
 
 pub mod components;
 pub mod connection_manager;
 mod widgets;
 
+
+
 pub enum Message {
     ShowScopes {
-        parent: Option<String>,
+        parent: Option<Scope>,
     },
     ShowTargets {
-        parent: Option<String>,
+        parent: Option<Scope>,
     },
     ShowSessions {
         scope: String,
-        target_id: String,
+        target: Target
     },
     Connect {
         target_id: String,
@@ -88,7 +91,7 @@ where
         C: boundary::ApiClient,
     {
         let scopes = boundary_client.get_scopes(None, false).await.unwrap();
-        let page = Page::Scopes(ScopesPage::new(scopes, send_message.clone()));
+        let page = Page::Scopes(ScopesPage::new(None, scopes, send_message.clone()));
         BountuiApp {
             boundary_client,
             user_id,
@@ -118,11 +121,13 @@ where
         None
     }
 
-    async fn show_scope(&mut self, parent: Option<&str>) {
-        match self.boundary_client.get_scopes(parent, false).await {
+    async fn show_scope(&mut self, parent: Option<Scope>) {
+        let parent_name = parent.as_ref().map(|p| p.name.as_str());
+        let parent_id = parent.as_ref().map(|p| p.id.as_str());
+        match self.boundary_client.get_scopes(parent_id, false).await {
             Ok(scopes) => {
                 self.navigate_to(
-                    Page::Scopes(ScopesPage::new(scopes, self.message_tx.clone())),
+                    Page::Scopes(ScopesPage::new(parent_name, scopes, self.message_tx.clone())),
                     false,
                 );
             }
@@ -132,11 +137,11 @@ where
         }
     }
 
-    async fn show_targets(&mut self, parent: Option<&str>) {
-        match self.boundary_client.get_targets(parent).await {
+    async fn show_targets(&mut self, parent: Option<Scope>) {
+        match self.boundary_client.get_targets(parent.as_ref().map(|s|s.id.as_str())).await {
             Ok(targets) => {
                 self.navigate_to(
-                    Page::Targets(TargetsPage::new(targets, self.message_tx.clone())),
+                    Page::Targets(TargetsPage::new(parent.as_ref().map(|s|s.name.as_str()), targets, self.message_tx.clone())),
                     false,
                 );
             }
@@ -154,7 +159,7 @@ where
         match scopes {
             Ok(scopes) => {
                 self.navigate_to(
-                    Page::Scopes(ScopesPage::new(scopes, self.message_tx.clone())),
+                    Page::Scopes(ScopesPage::new(None, scopes, self.message_tx.clone())),
                     true,
                 );
             }
@@ -168,6 +173,7 @@ where
         self.navigation_input = None;
         self.navigate_to(
             Page::UserSessions(SessionsPage::new(
+                Some("User"),
                 LoadUserSessions::new(
                     self.user_id.clone(),
                     self.boundary_client.clone(),
@@ -286,18 +292,19 @@ where
 
     pub async fn handle_message(&mut self, message: Message) {
         match message {
-            Message::ShowScopes { parent } => self.show_scope(parent.as_deref()).await,
-            Message::ShowTargets { parent } => self.show_targets(parent.as_deref()).await,
+            Message::ShowScopes { parent } => self.show_scope(parent).await,
+            Message::ShowTargets { parent } => self.show_targets(parent).await,
             Message::Connect { target_id, port } => self.connect(&target_id, port).await,
             Message::ShowSessions {
                 scope,
-                target_id: target,
+                target,
             } => {
                 self.navigate_to(
                     Page::TargetSessions(SessionsPage::new(
+                        Some(target.name.as_str()),
                         LoadTargetSessionsSessions::new(
                             scope,
-                            target,
+                            target.id,
                             self.boundary_client.clone(),
                             self.message_tx.clone(),
                         ),
