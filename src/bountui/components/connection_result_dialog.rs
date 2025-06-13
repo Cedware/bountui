@@ -62,7 +62,8 @@ impl ConnectionResultDialog {
             columns,
             connect_response.credentials,
             actions,
-            message_tx.clone()
+            message_tx.clone(),
+            false
         );
 
         Self {

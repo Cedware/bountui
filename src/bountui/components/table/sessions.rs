@@ -1,10 +1,12 @@
 use crate::boundary;
 use crate::boundary::{ApiClient, ApiClientExt, Error, SessionWithTarget};
 use crate::bountui::components::table::action::Action;
+use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
 use crossterm::event::Event;
+use futures::FutureExt;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::Frame;
 use std::future::Future;
@@ -13,14 +15,14 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
-use crate::bountui::components::table::util::format_title_with_parent;
+use tokio_util::sync::CancellationToken;
 
 pub struct SessionsPage<R: LoadSessions + Send + 'static> {
     table_page: TablePage<boundary::SessionWithTarget>,
     message_tx: mpsc::Sender<Message>,
-    reload_join_handle: tokio::task::JoinHandle<()>,
     reload_now_tx: mpsc::Sender<()>,
     marker: std::marker::PhantomData<R>,
+    cancellation_token: CancellationToken,
 }
 
 impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
@@ -76,43 +78,50 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
             Action::new(
                 "Stop Session".to_string(),
                 "d".to_string(), // Note: Shortcut display only, actual handling is separate
-                Box::new(|item: Option<&SessionWithTarget>| item.map_or(false, |s| s.session.can_cancel())),
+                Box::new(|item: Option<&SessionWithTarget>| {
+                    item.map_or(false, |s| s.session.can_cancel())
+                }),
             ),
         ];
 
-        let sessions:Vec<SessionWithTarget> = load_sessions.fetch_sessions_or_show_error().await.unwrap_or(Vec::new());
         let table_page = TablePage::new(
             format_title_with_parent("Sessions", parent_name),
             columns,
-            sessions,
+            Vec::new(),
             actions,
             message_tx.clone(),
+            true,
         );
 
-        let (reload_now_tx, reload_now_rx) = mpsc::channel(1);
+        let (reload_now_tx, mut reload_now_rx) = mpsc::channel(1);
+
+        let cancellation_token = CancellationToken::new();
+        {
+            let cancellation_token = cancellation_token.clone();
+            let refresh_future = async move {
+                loop {
+                    load_sessions.update_sessions().await;
+                    select! {
+                        _ = reload_now_rx.recv() => {}
+                        _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+                        _ = cancellation_token.cancelled() => {
+                                break;
+                            }
+                    }
+                }
+            }
+            .boxed();
+
+            let _ = message_tx.send(Message::RunFuture(refresh_future)).await;
+        }
 
         SessionsPage {
             table_page,
             message_tx,
-            reload_join_handle: Self::reload_task(load_sessions, reload_now_rx),
             reload_now_tx,
+            cancellation_token,
             marker: std::marker::PhantomData,
         }
-    }
-
-    fn reload_task(
-        reload_sessions: L,
-        mut reload_now_rx: mpsc::Receiver<()>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            loop {
-                reload_sessions.update_sessions().await;
-                select! {
-                    _ = reload_now_rx.recv() => {}
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {}
-                }
-            }
-        })
     }
 
     async fn stop_session(&self) {
@@ -148,6 +157,7 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
         match message {
             SessionsPageMessage::SessionsLoaded(sessions) => {
                 self.table_page.set_items(sessions);
+                self.table_page.loading = false;
             }
         }
     }
@@ -172,18 +182,20 @@ impl SortItems<SessionWithTarget> for TablePage<SessionWithTarget> {
 
 impl<R: LoadSessions> Drop for SessionsPage<R> {
     fn drop(&mut self) {
-        self.reload_join_handle.abort();
+        self.cancellation_token.cancel();
     }
 }
 
-pub trait LoadSessions: Send + Sync {
+pub trait LoadSessions: Send + Sync + Clone {
     fn fetch_sessions(
         &self,
     ) -> impl Future<Output = Result<Vec<boundary::SessionWithTarget>, boundary::Error>> + Send;
 
     fn message_tx(&self) -> &Sender<Message>;
 
-    fn fetch_sessions_or_show_error(&self) -> impl Future<Output = Option<Vec<SessionWithTarget>>> + Send {
+    fn fetch_sessions_or_show_error(
+        &self,
+    ) -> impl Future<Output = Option<Vec<SessionWithTarget>>> + Send {
         async {
             match self.fetch_sessions().await {
                 Ok(sessions) => Some(sessions),
@@ -210,6 +222,7 @@ pub trait LoadSessions: Send + Sync {
     }
 }
 
+#[derive(Clone)]
 pub struct LoadTargetSessionsSessions<B: boundary::ApiClient> {
     scope_id: String,
     target_id: String,
@@ -233,7 +246,7 @@ impl<B: boundary::ApiClient + Send + Sync> LoadTargetSessionsSessions<B> {
     }
 }
 
-impl<B: ApiClient + Send + Sync + 'static> LoadSessions for LoadTargetSessionsSessions<B> {
+impl<B: ApiClient + Clone + Send + Sync + 'static> LoadSessions for LoadTargetSessionsSessions<B> {
     async fn fetch_sessions(&self) -> Result<Vec<SessionWithTarget>, Error> {
         self.boundary_client
             .get_sessions_with_target(&self.scope_id)
@@ -251,6 +264,7 @@ impl<B: ApiClient + Send + Sync + 'static> LoadSessions for LoadTargetSessionsSe
     }
 }
 
+#[derive(Clone)]
 pub struct LoadUserSessions<B: boundary::ApiClient> {
     user_id: String,
     boundary_client: B,
@@ -267,9 +281,11 @@ impl<B: boundary::ApiClient> LoadUserSessions<B> {
     }
 }
 
-impl<B: boundary::ApiClient + Send + Sync + 'static> LoadSessions for LoadUserSessions<B> {
+impl<B: boundary::ApiClient + Clone + Send + Sync + 'static> LoadSessions for LoadUserSessions<B> {
     async fn fetch_sessions(&self) -> Result<Vec<SessionWithTarget>, Error> {
-        self.boundary_client.get_user_sessions_with_target(&self.user_id).await
+        self.boundary_client
+            .get_user_sessions_with_target(&self.user_id)
+            .await
     }
 
     fn message_tx(&self) -> &Sender<Message> {

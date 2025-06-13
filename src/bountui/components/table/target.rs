@@ -1,21 +1,29 @@
 use crate::boundary;
-use crate::boundary::{ConnectResponse, Target};
+use crate::boundary::{ApiClient, ConnectResponse, Scope, Target};
 use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
+use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::{ConnectionResultDialog, TablePage};
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
 use crate::util::MpscSenderExt;
 use crossterm::event::{Event, KeyCode};
+use futures::FutureExt;
+use ratatui::layout::Rect;
 use ratatui::prelude::Constraint;
 use ratatui::Frame;
 use std::rc::Rc;
-use ratatui::layout::Rect;
-use crate::bountui::components::table::util::format_title_with_parent;
 
 pub enum TargetsPageMessage {
     ConnectedToTarget(ConnectResponse),
+    TargetsLoaded(Vec<Target>),
+}
+
+impl From<TargetsPageMessage> for Message {
+    fn from(value: TargetsPageMessage) -> Self {
+        Message::Targets(value)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -29,16 +37,24 @@ pub enum ConnectDialogButtons {
     Ok,
 }
 
-pub struct TargetsPage {
+pub struct TargetsPage<C> {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result_dialog: Option<ConnectionResultDialog>,
-    message_tx: tokio::sync::mpsc::Sender<Message>
+    message_tx: tokio::sync::mpsc::Sender<Message>,
+    boundary_client: C,
+    parent_scope: Scope,
 }
 
-
-impl TargetsPage {
-    pub fn new(parent_name: Option<&str>, targets: Vec<Target>, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self{
+impl<C> TargetsPage<C> {
+    pub async fn new(
+        parent_scope: Scope,
+        message_tx: tokio::sync::mpsc::Sender<Message>,
+        boundary_client: C,
+    ) -> Self
+    where
+        C: ApiClient + Clone + Send + 'static,
+    {
         let columns = vec![
             TableColumn::new(
                 "Name".to_string(),
@@ -85,13 +101,53 @@ impl TargetsPage {
             ),
         ];
 
-        let table_page = TablePage::new(format_title_with_parent("Targets", parent_name), columns, targets, actions, message_tx.clone());
-        TargetsPage {
+        let table_page = TablePage::new(
+            format_title_with_parent("Targets", Some(parent_scope.name.as_str())),
+            columns,
+            Vec::new(),
+            actions,
+            message_tx.clone(),
+            true
+        );
+        let targets_page = TargetsPage {
             table_page,
             connect_dialog: None,
             connect_result_dialog: None,
-            message_tx
-        }
+            message_tx,
+            parent_scope,
+            boundary_client,
+        };
+        targets_page.load_targets().await;
+        targets_page
+    }
+
+    pub async fn load_targets(&self)
+    where
+        C: ApiClient + Clone + Send + 'static,
+    {
+        let boundary_client = self.boundary_client.clone();
+        let message_tx = self.message_tx.clone();
+        let scope_id = self.parent_scope.id.clone();
+        let future = async move {
+            match boundary_client.get_targets(Some(scope_id.as_str())).await {
+                Ok(targets) => {
+                    message_tx
+                        .send(TargetsPageMessage::TargetsLoaded(targets).into())
+                        .await
+                        .unwrap();
+                }
+                Err(e) => {
+                    message_tx
+                        .send(Message::ShowAlert(
+                            "Error".to_string(),
+                            format!("Failed to load targets: {e}"),
+                        ))
+                        .await
+                        .unwrap();
+                }
+            }
+        }.boxed();
+        self.message_tx.send(Message::RunFuture(future)).await.unwrap();
     }
 
     pub fn view(&self, frame: &mut Frame, area: Rect) {
@@ -111,13 +167,15 @@ impl TargetsPage {
     fn open_connect_dialog(&mut self) {
         self.connect_dialog = Some(InputDialog::new(
             "Connect",
-            vec![
-                InputField::new(ConnectDialogFields::ListenPort, "Listen Port", ""),
-            ],
+            vec![InputField::new(
+                ConnectDialogFields::ListenPort,
+                "Listen Port",
+                "",
+            )],
             vec![
                 Button::new(ConnectDialogButtons::Cancel, "Cancel"),
                 Button::new(ConnectDialogButtons::Ok, "Ok"),
-            ]
+            ],
         ));
     }
 
@@ -126,31 +184,51 @@ impl TargetsPage {
     }
 
     pub fn connection_establised(&mut self, response: ConnectResponse) {
-        self.connect_result_dialog = Some(ConnectionResultDialog::new(response, self.message_tx.clone()));
+        self.connect_result_dialog = Some(ConnectionResultDialog::new(
+            response,
+            self.message_tx.clone(),
+        ));
     }
-    
+
     async fn connect_to_target(&mut self) {
         if let Some(target) = self.table_page.selected_item() {
-            let port: u16 = self.connect_dialog.as_ref().unwrap().fields.iter().find(|field| field.id == ConnectDialogFields::ListenPort).unwrap().value.value().parse().unwrap();
-            let _ = self.message_tx.send(Message::Connect {
-                target_id: target.id.clone(),
-                port,
-            }).await.unwrap();
+            let port: u16 = self
+                .connect_dialog
+                .as_ref()
+                .unwrap()
+                .fields
+                .iter()
+                .find(|field| field.id == ConnectDialogFields::ListenPort)
+                .unwrap()
+                .value
+                .value()
+                .parse()
+                .unwrap();
+            let _ = self
+                .message_tx
+                .send(Message::Connect {
+                    target_id: target.id.clone(),
+                    port,
+                })
+                .await
+                .unwrap();
             self.connect_dialog = None;
         }
     }
 
     async fn show_sessions(&mut self) {
         if let Some(target) = self.table_page.selected_item() {
-            self.message_tx.send(Message::ShowSessions {
-                scope: target.scope_id.clone(),
-                target: (*target).clone()
-            }).await.unwrap();
+            self.message_tx
+                .send(Message::ShowSessions {
+                    scope: target.scope_id.clone(),
+                    target: (*target).clone(),
+                })
+                .await
+                .unwrap();
         }
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
-
         // 1. Handle ConnectionResultDialog FIRST if it's open
         if let Some(dialog) = &mut self.connect_result_dialog {
             if let Event::Key(key_event) = event {
@@ -194,22 +272,22 @@ impl TargetsPage {
                 KeyCode::Char('c') => {
                     // Only open connect dialog if a target is selected and can be connected to
                     if let Some(target) = self.table_page.selected_item() {
-                         if target.can_connect() {
-                              self.open_connect_dialog();
-                         }
+                        if target.can_connect() {
+                            self.open_connect_dialog();
+                        }
                     }
-                },
+                }
                 KeyCode::Char('C') => {
                     // Show sessions for the selected target if possible
-                     if self.table_page.selected_item().is_some() {
-                         self.show_sessions().await;
-                     }
-                },
+                    if self.table_page.selected_item().is_some() {
+                        self.show_sessions().await;
+                    }
+                }
                 KeyCode::Esc => {
                     // Go back only if no dialogs are open
                     self.message_tx.send_or_expect(GoBack).await;
-                },
-                _ => { }
+                }
+                _ => {}
             }
         }
     }
@@ -218,10 +296,13 @@ impl TargetsPage {
         match message {
             TargetsPageMessage::ConnectedToTarget(response) => {
                 self.connection_establised(response);
+            },
+            TargetsPageMessage::TargetsLoaded(targets) => {
+                self.table_page.loading = false;
+                self.table_page.set_items(targets);
             }
         }
     }
-
 }
 
 impl SortItems<boundary::Target> for TablePage<boundary::Target> {
