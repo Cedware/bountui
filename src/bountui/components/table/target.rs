@@ -165,12 +165,17 @@ impl<C> TargetsPage<C> {
     }
 
     fn open_connect_dialog(&mut self) {
+        let suggested_port = self.table_page.selected_item()
+            .as_ref()
+            .and_then(|t| t.default_client_port())
+            .map(|port| port.to_string())
+            .unwrap_or_else(|| "".to_string());
         self.connect_dialog = Some(InputDialog::new(
             "Connect",
             vec![InputField::new(
                 ConnectDialogFields::ListenPort,
                 "Listen Port",
-                "",
+                suggested_port,
             )],
             vec![
                 Button::new(ConnectDialogButtons::Cancel, "Cancel"),
