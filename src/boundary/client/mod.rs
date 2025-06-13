@@ -11,11 +11,11 @@ use tokio_util::sync::CancellationToken;
 
 #[automock]
 pub trait ApiClient {
-    async fn get_scopes<'a>(
+    fn get_scopes<'a>(
         &self,
         parent: Option<&'a str>,
         recursive: bool,
-    ) -> Result<Vec<Scope>, Error>;
+    ) -> impl Future<Output = Result<Vec<Scope>, Error>> + Send;
     fn get_targets<'a>(
         &self,
         scope: Option<&'a str>,

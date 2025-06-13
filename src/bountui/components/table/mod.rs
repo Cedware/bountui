@@ -12,7 +12,7 @@ use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
 
 use crate::bountui::components::table::filter::Filter;
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::block::{Position, Title};
 use ratatui::widgets::{Block, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
@@ -24,6 +24,7 @@ use tui_input::Input;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
 pub use action::Action;
+use crate::bountui::components::util::center;
 
 pub trait SortItems<T> {
     fn sort(items: &mut Vec<Rc<T>>);
@@ -63,9 +64,10 @@ pub struct TablePage<T> {
     message_tx: mpsc::Sender<Message>,
     actions: Vec<Action<T>>,
     page_size: Cell<usize>,
+    pub loading: bool
 }
 impl<T> TablePage<T> where Self: SortItems<T> {
-    pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, actions: Vec<Action<T>>, message_tx: mpsc::Sender<Message>) -> Self {
+    pub fn new(title: String, columns: Vec<TableColumn<T>>, items: Vec<T>, actions: Vec<Action<T>>, message_tx: mpsc::Sender<Message>, loading: bool) -> Self {
         let mut items: Vec<Rc<T>> = items.into_iter().map(Rc::new).collect();
         Self::sort(&mut items);
         let visible_items: Vec<Rc<T>> = items.iter().cloned().collect();
@@ -79,6 +81,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             actions,
             message_tx,
             page_size: Cell::new(0),
+            loading
         };
         table_page.select_first_or_none();
         table_page
@@ -97,6 +100,8 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             if selected >= self.items.len() {
                 self.select_first_or_none();
             }
+        } else {
+            self.select_first_or_none();
         }
 
     }
@@ -299,6 +304,16 @@ impl<T> TablePage<T> where Self: SortItems<T> {
 
 
         frame.render_stateful_widget(self.table(), table_area, &mut self.table_state.borrow_mut());
+
+        if self.loading {
+            let loading_text = Text::raw("Loading...");
+            let width = loading_text.width() + 2;
+            let loading = Paragraph::new(loading_text)
+                .block(Block::bordered().light_blue().on_black());
+            let loading_area = center(table_area, Constraint::Length(width as u16), Constraint::Length(3));
+            frame.render_widget(loading, loading_area);
+        }
+
     }
 
 }
