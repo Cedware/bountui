@@ -42,6 +42,7 @@ pub struct Target {
     #[serde(default)]
     pub authorized_actions: Vec<String>,
     pub scope_id: String,
+    pub attributes: Option<TargetAttributes>,
 }
 
 impl PartialOrd for Target {
@@ -55,6 +56,15 @@ impl Target {
         self.authorized_actions
             .contains(&"authorize-session".to_string())
     }
+
+    pub fn default_client_port(&self) -> Option<u16> {
+        self.attributes.as_ref().and_then(|a| a.default_client_port)
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct TargetAttributes {
+    pub default_client_port: Option<u16>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -90,10 +100,23 @@ pub struct Session {
     pub created_time: DateTime<Utc>,
     pub status: String,
     pub authorized_actions: Vec<String>,
+    pub user_id: String,
 }
 
 impl Session {
     pub fn can_cancel(&self) -> bool {
         self.authorized_actions.contains(&"cancel:self".to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionWithTarget {
+    pub session: Session,
+    pub target: Target,
+}
+
+impl SessionWithTarget {
+    pub fn new(session: Session, target: Target) -> SessionWithTarget {
+        SessionWithTarget { session, target }
     }
 }

@@ -2,62 +2,28 @@ mod boundary;
 mod bountui;
 pub mod event_ext;
 mod util;
+mod cross_term;
 
-use std::env;
-use crossterm::event::Event;
-use tokio::select;
 use crate::boundary::ApiClient;
 use crate::bountui::BountuiApp;
-
-
-fn receive_cross_term_events() -> tokio::sync::mpsc::Receiver<Event> {
-
-    let (sender, receiver) = tokio::sync::mpsc::channel(100);
-    tokio::task::spawn(async move {
-        loop {
-            if let Ok(event) = crossterm::event::read() {
-                if sender.send(event).await.is_err() {
-                    break;
-                }
-            }
-        }
-    });
-    receiver
-}
+use std::env;
+use std::fs::create_dir_all;
+use std::path::Path;
 
 #[tokio::main]
 async fn main() {
-    let (send_message, mut receive_message) = tokio::sync::mpsc::channel(100);
     let boundary_client = boundary::CliClient::default();
     let connection_manager = bountui::connection_manager::ConnectionManager::new(boundary_client.clone());
     let auth_result = boundary_client.authenticate().await.unwrap();
-    env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token);
 
-    let mut app = BountuiApp::new(boundary_client, connection_manager, send_message).await;
-    let mut terminal = ratatui::init();
-    terminal.clear().unwrap();
+    //This is safe because this is the only place we set the environment variable
+    unsafe { env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token) };
 
-    let mut cross_term_event_receiver = receive_cross_term_events();
+    let user_input_file_path = Path::new("/home/cedrick/.bountui/user_inputs.json");
+    create_dir_all(user_input_file_path.parent().unwrap()).unwrap();
 
-
-    while !app.is_finished {
-        terminal.draw(|frame| {
-            app.view(frame);
-        }).unwrap();
-
-        select! {
-            message = receive_message.recv() => {
-                if let Some(message) = message {
-                    app.handle_message(message).await;
-                }
-            }
-            event = cross_term_event_receiver.recv() => {
-                if let Some(event) = event {
-                    app.handle_event(&event).await;
-                }
-            }
-        }
-    }
+    let mut app = BountuiApp::new(boundary_client, auth_result.attributes.user_id, connection_manager, &user_input_file_path).await;
+    let _ = app.run().await;
 
 
 }
