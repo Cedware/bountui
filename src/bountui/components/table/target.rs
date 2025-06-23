@@ -5,6 +5,7 @@ use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::{ConnectionResultDialog, TablePage};
+use crate::bountui::remember_user_input::RememberUserInput;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
 use crate::util::MpscSenderExt;
@@ -37,20 +38,22 @@ pub enum ConnectDialogButtons {
     Ok,
 }
 
-pub struct TargetsPage<C> {
+pub struct TargetsPage<C, S: RememberUserInput> {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result_dialog: Option<ConnectionResultDialog>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     boundary_client: C,
     parent_scope: Scope,
+    remember_user_input: S,
 }
 
-impl<C> TargetsPage<C> {
+impl<C, S: RememberUserInput> TargetsPage<C, S> {
     pub async fn new(
         parent_scope: Scope,
         message_tx: tokio::sync::mpsc::Sender<Message>,
         boundary_client: C,
+        remember_user_input: S,
     ) -> Self
     where
         C: ApiClient + Clone + Send + 'static,
@@ -107,7 +110,7 @@ impl<C> TargetsPage<C> {
             Vec::new(),
             actions,
             message_tx.clone(),
-            true
+            true,
         );
         let targets_page = TargetsPage {
             table_page,
@@ -116,6 +119,7 @@ impl<C> TargetsPage<C> {
             message_tx,
             parent_scope,
             boundary_client,
+            remember_user_input,
         };
         targets_page.load_targets().await;
         targets_page
@@ -146,8 +150,12 @@ impl<C> TargetsPage<C> {
                         .unwrap();
                 }
             }
-        }.boxed();
-        self.message_tx.send(Message::RunFuture(future)).await.unwrap();
+        }
+        .boxed();
+        self.message_tx
+            .send(Message::RunFuture(future))
+            .await
+            .unwrap();
     }
 
     pub fn view(&self, frame: &mut Frame, area: Rect) {
@@ -165,11 +173,22 @@ impl<C> TargetsPage<C> {
     }
 
     fn open_connect_dialog(&mut self) {
-        let suggested_port = self.table_page.selected_item()
+        let selected_item = self.table_page.selected_item().unwrap();
+        let remembered_port: Option<u16> = self
+            .remember_user_input
+            .get_local_port(&selected_item.id)
+            .unwrap_or(None);
+        let default_port = self
+            .table_page
+            .selected_item()
             .as_ref()
-            .and_then(|t| t.default_client_port())
-            .map(|port| port.to_string())
+            .and_then(|t| t.default_client_port());
+
+        let suggested_port = remembered_port
+            .or(default_port)
+            .map(|p| p.to_string())
             .unwrap_or_else(|| "".to_string());
+
         self.connect_dialog = Some(InputDialog::new(
             "Connect",
             vec![InputField::new(
@@ -201,14 +220,11 @@ impl<C> TargetsPage<C> {
                 .connect_dialog
                 .as_ref()
                 .unwrap()
-                .fields
-                .iter()
-                .find(|field| field.id == ConnectDialogFields::ListenPort)
+                .get_value(ConnectDialogFields::ListenPort)
                 .unwrap()
-                .value
-                .value()
                 .parse()
                 .unwrap();
+            self.store_selected_port(port);
             let _ = self
                 .message_tx
                 .send(Message::Connect {
@@ -218,6 +234,14 @@ impl<C> TargetsPage<C> {
                 .await
                 .unwrap();
             self.connect_dialog = None;
+        }
+    }
+
+    fn store_selected_port(&mut self, port: u16) {
+        if let Some(target) = self.table_page.selected_item() {
+            let _ = self
+                .remember_user_input
+                .store_local_port(target.id.clone(), port);
         }
     }
 
@@ -301,7 +325,7 @@ impl<C> TargetsPage<C> {
         match message {
             TargetsPageMessage::ConnectedToTarget(response) => {
                 self.connection_establised(response);
-            },
+            }
             TargetsPageMessage::TargetsLoaded(targets) => {
                 self.table_page.loading = false;
                 self.table_page.set_items(targets);

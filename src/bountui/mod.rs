@@ -19,10 +19,12 @@ use ratatui::Frame;
 use std::fmt::Display;
 use std::mem;
 use tokio::select;
+pub use remember_user_input::*;
 
 pub mod components;
 pub mod connection_manager;
 mod widgets;
+mod remember_user_input;
 
 pub enum Message {
     ShowScopes {
@@ -63,17 +65,17 @@ impl Message {
     }
 }
 
-pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static> {
+pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput> {
     Scopes(ScopesPage),
-    Targets(TargetsPage<B>),
+    Targets(TargetsPage<B, R>),
     TargetSessions(SessionsPage<LoadTargetSessionsSessions<B>>),
     UserSessions(SessionsPage<LoadUserSessions<B>>),
 }
 
-pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static> {
-    page: Page<C>,
+pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput + Copy> {
+    page: Page<C, R>,
     boundary_client: C,
-    history: Vec<Page<C>>,
+    history: Vec<Page<C, R>>,
     connection_manager: ConnectionManager<C>,
     alert: Option<(String, String)>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
@@ -82,9 +84,10 @@ pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static> {
     user_id: String,
     navigation_input: Option<NavigationInput>,
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
+    remember_user_input: R
 }
 
-impl<C> BountuiApp<C>
+impl<C, R: RememberUserInput + Copy> BountuiApp<C, R>
 where
     C: boundary::ApiClient + Clone + Send + Sync,
 {
@@ -92,6 +95,7 @@ where
         boundary_client: C,
         user_id: String,
         connection_manager: ConnectionManager<C>,
+        remember_user_input: R,
     ) -> Self
     where
         C: boundary::ApiClient,
@@ -112,10 +116,11 @@ where
             is_finished: false,
             navigation_input: None,
             tasks: FuturesUnordered::new(),
+            remember_user_input
         }
     }
 
-    pub fn navigate_to(&mut self, page: Page<C>, replace_history: bool) {
+    pub fn navigate_to(&mut self, page: Page<C, R>, replace_history: bool) {
         if replace_history {
             self.history.clear();
             self.page = page;
@@ -150,7 +155,8 @@ where
             Page::Targets(TargetsPage::new(
                 parent,
                 self.message_tx.clone(),
-                self.boundary_client.clone()
+                self.boundary_client.clone(),
+                self.remember_user_input
             ).await),
             false,
         );

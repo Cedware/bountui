@@ -98,7 +98,7 @@ impl<FieldId, ButtonId> InputDialog<FieldId, ButtonId>
     
 }
 
-impl<FieldId, ButtonId> InputDialog<FieldId, ButtonId> where FieldId: Clone, ButtonId: Clone
+impl<FieldId, ButtonId> InputDialog<FieldId, ButtonId> where FieldId: Clone + Eq, ButtonId: Clone
 {
     fn handle_event_while_input_selected(&mut self, event: &Event, selected_input_index: usize) where FieldId: Eq {
         if let Event::Key(key_event) = event {
@@ -261,6 +261,10 @@ impl<FieldId, ButtonId> InputDialog<FieldId, ButtonId> where FieldId: Clone, But
             SelectedItem::Button(i) => self.handle_event_while_button_is_selected(event, i),
         }
 
+    }
+
+    pub fn get_value(&self, field: FieldId) -> Option<&str> {
+        self.fields.iter().find(|f| f.id == field).map(|f| f.value.value())
     }
 
 
