@@ -96,3 +96,55 @@ impl<P> RememberUserInput for Option<P> where P: RememberUserInput {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::path::Path;
+    use tempfile::NamedTempFile;
+    use crate::bountui::{RememberUserInput, UserInputsPath};
+
+    const JSON: &str = "{\"local_ports\": {\"target_id\": 8080}}";
+
+    fn create_user_input_file() -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(JSON.as_bytes()).unwrap();
+        file
+    }
+
+    #[test]
+    fn test_get_local_port_file_does_not_exist() {
+        let path = UserInputsPath(Path::new("/does/not/exist"));
+        let port = path.get_local_port(&"target_id".to_string()).unwrap();
+        assert!(port.is_none());
+    }
+
+    #[test]
+    fn test_get_local_port_for_target_that_is_not_stored() {
+        let file = create_user_input_file();
+        let path = UserInputsPath(file.path());
+        let port = path.get_local_port(&"unknown_target_id".to_string()).unwrap();
+        assert!(port.is_none());
+    }
+
+    #[test]
+    fn test_get_local_port_for_target_that_is_stored() {
+        let file = create_user_input_file();
+        let path = UserInputsPath(file.path());
+        let port = path.get_local_port(&"target_id".to_string()).unwrap();
+        assert_eq!(Some(8080), port);
+    }
+
+    #[test]
+    fn store_local_port_and_get_local_port() {
+        let file = NamedTempFile::new().unwrap();
+        let mut path = UserInputsPath(file.path());
+        path.store_local_port("target_id_1".to_string(), 8080).unwrap();
+        path.store_local_port("target_id_2".to_string(), 8081).unwrap();
+        let target_id_1_port = path.get_local_port(&"target_id_1".to_string()).unwrap();
+        let target_id_2_port = path.get_local_port(&"target_id_2".to_string()).unwrap();
+        assert_eq!(Some(8080), target_id_1_port);
+        assert_eq!(Some(8081), target_id_2_port);
+    }
+
+}
