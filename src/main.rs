@@ -5,10 +5,9 @@ mod util;
 mod cross_term;
 
 use crate::boundary::ApiClient;
-use crate::bountui::BountuiApp;
+use crate::bountui::{BountuiApp, UserInputsPath};
 use std::env;
-use std::fs::create_dir_all;
-use std::path::Path;
+
 
 #[tokio::main]
 async fn main() {
@@ -19,10 +18,19 @@ async fn main() {
     //This is safe because this is the only place we set the environment variable
     unsafe { env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token) };
 
-    let user_input_file_path = Path::new("/home/cedrick/.bountui/user_inputs.json");
-    create_dir_all(user_input_file_path.parent().unwrap()).unwrap();
 
-    let mut app = BountuiApp::new(boundary_client, auth_result.attributes.user_id, connection_manager, &user_input_file_path).await;
+    let user_inputs_path_buf = home::home_dir().map(|mut path| {
+        path.push(".bountui");
+        path.push("user_inputs.json");
+        path
+    });
+    let user_inputs_path = if let Some(path) = user_inputs_path_buf.as_ref() {
+        Some(UserInputsPath(path))
+    } else {
+        None
+    };
+
+    let mut app = BountuiApp::new(boundary_client, auth_result.attributes.user_id, connection_manager, user_inputs_path).await;
     let _ = app.run().await;
 
 

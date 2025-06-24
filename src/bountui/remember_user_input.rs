@@ -10,6 +10,7 @@ struct UserInputs {
     local_ports: HashMap<String, u16>,
 }
 
+
 pub trait RememberUserInput {
     fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()>;
     fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>>;
@@ -48,22 +49,50 @@ fn write_user_inputs<P: AsRef<Path>>(path: P, user_inputs: &UserInputs) -> anyho
     Ok(())
 }
 
-impl<P> RememberUserInput for P
+#[derive(Copy, Clone)]
+pub struct UserInputsPath<P>(pub P);
+
+impl <P: AsRef<Path>> From<P> for UserInputsPath<P> {
+    fn from(value: P) -> Self {
+        UserInputsPath(value)
+    }
+}
+
+impl<P> RememberUserInput for UserInputsPath<P>
 where
     P: AsRef<Path>,
 {
     fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()> {
         let mut user_inputs =
-            read_user_inputs(self.as_ref()).context("Failed to read user inputs")?;
+            read_user_inputs(self.0.as_ref()).context("Failed to read user inputs")?;
         user_inputs.local_ports.insert(target, port);
-        write_user_inputs(self.as_ref(), &user_inputs)
+        write_user_inputs(self.0.as_ref(), &user_inputs)
     }
 
     fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>> {
-        Ok(read_user_inputs(self.as_ref())
+        Ok(read_user_inputs(self.0.as_ref())
             .context("Failed to read user inputs")?
             .local_ports
             .get(target_id)
             .copied())
+    }
+}
+
+impl<P> RememberUserInput for Option<P> where P: RememberUserInput {
+    fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()> {
+        if let Some(inner_self) = self {
+            inner_self.store_local_port(target, port)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>> {
+        if let Some(inner_self) = self {
+            inner_self.get_local_port(target_id)
+        }
+        else {
+            Ok(None)
+        }
     }
 }
