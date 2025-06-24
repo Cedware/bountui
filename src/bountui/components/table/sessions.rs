@@ -77,7 +77,7 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
             ),
             Action::new(
                 "Stop Session".to_string(),
-                "d".to_string(), // Note: Shortcut display only, actual handling is separate
+                "Ctrl + d".to_string(), // Note: Shortcut display only, actual handling is separate
                 Box::new(|item: Option<&SessionWithTarget>| {
                     item.map_or(false, |s| s.session.can_cancel())
                 }),
