@@ -41,6 +41,7 @@ fn write_user_inputs<P: AsRef<Path>>(path: P, user_inputs: &UserInputs) -> anyho
     let file = OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(true)
         .open(path)
         .context("Failed to open file")?;
     serde_json::to_writer_pretty(file, user_inputs).context("Failed to write json")?;
