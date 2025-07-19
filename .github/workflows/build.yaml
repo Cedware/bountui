@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: cedware/bountui
+          repository: cedware/homebrew-test-formulas
           token: ${{ secrets.PAT_HOMEBREW_REPO }}
       - name: update contents
         run: |
