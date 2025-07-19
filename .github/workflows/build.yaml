@@ -126,3 +126,24 @@ jobs:
           git add .SRCINFO
           git commit -m "Update PKGBUILD for v${{ needs.release.outputs.new_release_version }}"
           git push origin master
+
+  update_homebrew_formula:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: cedware/bountui
+          token: ${{ secrets.PAT_HOMEBREW_REPO }}
+      - name: update contents
+        run: |
+          bin_archive=https://github.com/Cedware/bountui/releases/download/v0.4.0/bountui-0.4.0-aarch64-apple-darwin.zip
+          curl -L $bin_archive -o bin.zip
+          checksum=$(sha256sum bin.zip | cut -d ' ' -f 1)
+          echo "checksum: $checksum"
+          sed -i "s|^  url \".*\"|  url \"${bin_archive}\"|" Formula/bountui.rb
+          sed -i "s|^  sha256 \".*\"|  sha256 \"${checksum}\"|" Formula/bountui.rb
+          git config --global user.email "cedware-dev@protonmail.com"
+          git config --global user.name "Cedric Krause"
+          git add .
+          git commit -m "Updated bountui formula to version x.y.z"
+          git push
