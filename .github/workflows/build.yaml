@@ -140,7 +140,7 @@ jobs:
         run: |
           bin_archive=https://github.com/Cedware/bountui/releases/download/v${{ needs.release.outputs.new_release_version }}/bountui-${{ needs.release.outputs.new_release_version }}-aarch64-apple-darwin.zip
           curl -L $bin_archive -o bin.zip
-          checksum=$(sha256sum bin.zip | cut -d ' ' -f 1)
+          checksum=$(sha256sum bin.zip | cut -d ' ' -f 1
           echo "checksum: $checksum"
           sed -i "s|^  url \".*\"|  url \"${bin_archive}\"|" Formula/bountui.rb
           sed -i "s|^  sha256 \".*\"|  sha256 \"${checksum}\"|" Formula/bountui.rb
@@ -149,3 +149,25 @@ jobs:
           git add .
           git commit -m "Updated bountui formula to version ${{ steps.get_version.outputs.new_release_version }}"
           git push
+
+  update_scoop_repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: cedware/scoop-bucket-test
+          token: ${{ secrets.PAT_GITHUB }}
+      - name: update contents
+        run: |
+          bin_archive=https://github.com/Cedware/bountui/releases/download/v0.4.0/bountui-0.4.0-x86_64-pc-windows-gnu.zip
+          curl -L $bin_archive -o bin.zip
+          checksum=$(sha256sum bin.zip | cut -d ' ' -f 1
+          echo "checksum: $checksum"
+          sed -i 's#\("url":\s*"\)[^"]*\("\)#\1${bin_archive}\2#' bountui.json
+          sed -i 's#\("hash":\s*"\)[^"]*\("\)#\1${checksom}\2#' bountui.json
+          git config --global user.email "cedware-dev@protonmail.com"
+          git config --global user.name "Cedric Krause"
+          git add .
+          git commit -m "Updated bountui manifest to version x.y.z"
+          git push
+          
