@@ -4,6 +4,7 @@
 with [HashiCorp Boundary](https://www.hashicorp.com/products/boundary). It provides an intuitive way to navigate scopes,
 targets, and sessions, making Boundary management more accessible directly from your terminal.
 
+
 ---
 
 ## 🚀 Prerequisites
@@ -57,4 +58,8 @@ bountui provides several keyboard shortcuts for interacting with Boundary resour
 | `Ctrl+c`       | Quit bountui                                 |
 | `Esc`          | Go back to the previous view                 |
 | `:my-sessions` | Shows all sessions created by you            |
-| `:scope-tree`  | Shows the default view                       |                       
+| `:scope-tree`  | Shows the default view                       |            
+
+## Demo
+
+![bountui gif](./images/bountui.gif)

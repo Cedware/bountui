@@ -1,4 +1,4 @@
-use crossterm::event::Event;
+use crossterm::event::{Event, KeyEventKind};
 
 pub fn receive_cross_term_events() -> tokio::sync::mpsc::Receiver<Event> {
 
@@ -6,9 +6,15 @@ pub fn receive_cross_term_events() -> tokio::sync::mpsc::Receiver<Event> {
     tokio::task::spawn(async move {
         loop {
             if let Ok(event) = crossterm::event::read() {
-                if let Err(_) = sender.send(event).await {
-                    break;
-                }
+
+                    if let Event::Key(key_event) = event {
+                        if key_event.kind == KeyEventKind::Press {
+                            if let Err(_) = sender.send(event).await {
+                                break;
+                            }
+                        }
+                    }
+
             }
             else { 
                 break;
