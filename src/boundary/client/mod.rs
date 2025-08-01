@@ -6,11 +6,13 @@ use crate::boundary::error::Error;
 use crate::boundary::models::{ConnectResponse, SessionWithTarget, Target};
 use crate::boundary::{Scope, Session};
 use std::future::Future;
-use mockall::automock;
-use tokio_util::sync::CancellationToken;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-#[automock]
+#[cfg_attr(test, mockall::automock(type ConnectionHandle = Arc<tokio::sync::Mutex<MockBoundaryConnectionHandle>>;))]
 pub trait ApiClient {
+    type ConnectionHandle: BoundaryConnectionHandle;
+
     fn get_scopes<'a>(
         &self,
         parent: Option<&'a str>,
@@ -21,7 +23,10 @@ pub trait ApiClient {
         scope: Option<&'a str>,
     ) -> impl Future<Output = Result<Vec<Target>, Error>> + Send;
 
-    fn get_sessions(&self, scope: &str) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync;
+    fn get_sessions(
+        &self,
+        scope: &str,
+    ) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync;
 
     #[warn(dead_code)]
     fn get_user_sessions(
@@ -33,27 +38,32 @@ pub trait ApiClient {
         &self,
         target_id: &str,
         port: u16,
-        cancellation_token: CancellationToken,
-    ) -> Result<ConnectResponse, Error>;
+    ) -> Result<(ConnectResponse, Self::ConnectionHandle), Error>;
 
-    async fn cancel_session(&self, session_id: &str) -> Result<Session, Error>;
+    async fn cancel_session(&self, session_id: &str) -> Result<(), Error>;
 
     async fn authenticate(&self) -> Result<AuthenticateResponse, Error>;
-
 }
 
-
-
 pub trait ApiClientExt: ApiClient + Sync {
-
-    fn combine_sessions_with_target(sessions: Vec<Session>, targets: Vec<Target>) -> Vec<SessionWithTarget> {
-        sessions.into_iter().map(|s| {
-            let target = targets.iter().find(|t| s.target_id == t.id).cloned();
-            target.map(|t| SessionWithTarget::new(s, t))
-        }).flatten().collect()
+    fn combine_sessions_with_target(
+        sessions: Vec<Session>,
+        targets: Vec<Target>,
+    ) -> Vec<SessionWithTarget> {
+        sessions
+            .into_iter()
+            .map(|s| {
+                let target = targets.iter().find(|t| s.target_id == t.id).cloned();
+                target.map(|t| SessionWithTarget::new(s, t))
+            })
+            .flatten()
+            .collect()
     }
 
-    fn get_sessions_with_target(&self, scope: &str) -> impl Future<Output = Result<Vec<SessionWithTarget>, Error>> + Send {
+    fn get_sessions_with_target(
+        &self,
+        scope: &str,
+    ) -> impl Future<Output = Result<Vec<SessionWithTarget>, Error>> + Send {
         async {
             let targets = self.get_targets(Some(scope)).await?;
             let sessions = self.get_sessions(scope).await?;
@@ -61,7 +71,10 @@ pub trait ApiClientExt: ApiClient + Sync {
         }
     }
 
-    fn get_user_sessions_with_target(&self, user_id: &str) -> impl Future<Output = Result<Vec<SessionWithTarget>, Error>> + Send {
+    fn get_user_sessions_with_target(
+        &self,
+        user_id: &str,
+    ) -> impl Future<Output = Result<Vec<SessionWithTarget>, Error>> + Send {
         async {
             let targets = self.get_targets(None).await?;
             let user_sessions = self.get_user_sessions(user_id).await?;
@@ -70,4 +83,27 @@ pub trait ApiClientExt: ApiClient + Sync {
     }
 }
 
-impl <T: ApiClient + Sync> ApiClientExt for T {}
+impl<T: ApiClient + Sync> ApiClientExt for T {}
+
+#[cfg_attr(test, mockall::automock(type Error = std::io::Error;))]
+pub trait BoundaryConnectionHandle: Send {
+    type Error: std::error::Error + Send;
+
+    fn wait(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    fn stop(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+impl<T> BoundaryConnectionHandle for Arc<Mutex<T>>
+where
+    T: BoundaryConnectionHandle,
+{
+    type Error = T::Error;
+
+    async fn wait(&mut self) -> Result<(), Self::Error> {
+        self.lock().await.wait().await
+    }
+
+    async fn stop(&mut self) -> Result<(), Self::Error> {
+        self.lock().await.stop().await
+    }
+}

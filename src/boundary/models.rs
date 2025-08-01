@@ -89,6 +89,7 @@ pub struct ConnectResponse {
     #[serde(default)]
     pub credentials: Vec<CredentialEntry>,
     pub session_id: String,
+    pub expiration: DateTime<Utc>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
