@@ -16,15 +16,15 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use ratatui::layout::Constraint;
 use ratatui::Frame;
+pub use remember_user_input::*;
 use std::fmt::Display;
 use std::mem;
 use tokio::select;
-pub use remember_user_input::*;
 
 pub mod components;
 pub mod connection_manager;
-mod widgets;
 mod remember_user_input;
+mod widgets;
 
 pub enum Message {
     ShowScopes {
@@ -72,7 +72,10 @@ pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: Remembe
     UserSessions(SessionsPage<LoadUserSessions<B>>),
 }
 
-pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput + Copy> {
+pub struct BountuiApp<
+    C: boundary::ApiClient + Clone + Send + Sync + 'static,
+    R: RememberUserInput + Copy,
+> {
     page: Page<C, R>,
     boundary_client: C,
     history: Vec<Page<C, R>>,
@@ -84,7 +87,7 @@ pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static, R:
     user_id: String,
     navigation_input: Option<NavigationInput>,
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
-    remember_user_input: R
+    remember_user_input: R,
 }
 
 impl<C, R: RememberUserInput + Copy> BountuiApp<C, R>
@@ -116,7 +119,7 @@ where
             is_finished: false,
             navigation_input: None,
             tasks: FuturesUnordered::new(),
-            remember_user_input
+            remember_user_input,
         }
     }
 
@@ -152,12 +155,15 @@ where
 
     async fn show_targets(&mut self, parent: Scope) {
         self.navigate_to(
-            Page::Targets(TargetsPage::new(
-                parent,
-                self.message_tx.clone(),
-                self.boundary_client.clone(),
-                self.remember_user_input
-            ).await),
+            Page::Targets(
+                TargetsPage::new(
+                    parent,
+                    self.message_tx.clone(),
+                    self.boundary_client.clone(),
+                    self.remember_user_input,
+                )
+                .await,
+            ),
             false,
         );
     }
@@ -372,33 +378,18 @@ where
                     self.view(frame);
                 })
                 .unwrap();
-            if self.tasks.is_empty() {
-                select! {
-                    message = self.message_rx.recv() => {
-                        if let Some(message) = message {
-                            self.handle_message(message).await;
-                        }
-                    }
-                    event = cross_term_event_receiver.recv() => {
-                        if let Some(event) = event {
-                            self.handle_event(&event).await;
-                        }
+            select! {
+                message = self.message_rx.recv() => {
+                    if let Some(message) = message {
+                        self.handle_message(message).await;
                     }
                 }
-            } else {
-                select! {
-                    message = self.message_rx.recv() => {
-                        if let Some(message) = message {
-                            self.handle_message(message).await;
-                        }
+                event = cross_term_event_receiver.recv() => {
+                    if let Some(event) = event {
+                        self.handle_event(&event).await;
                     }
-                    event = cross_term_event_receiver.recv() => {
-                        if let Some(event) = event {
-                            self.handle_event(&event).await;
-                        }
-                    },
-                    _ = self.tasks.next() => {}
-                }
+                },
+                _ = self.tasks.next() => {}
             }
         }
     }
