@@ -90,6 +90,7 @@ pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static, R:
 impl<C, R: RememberUserInput + Copy> BountuiApp<C, R>
 where
     C: boundary::ApiClient + Clone + Send + Sync,
+    C::ConnectionHandle: Send
 {
     pub async fn new(
         boundary_client: C,
@@ -97,8 +98,6 @@ where
         connection_manager: ConnectionManager<C>,
         remember_user_input: R,
     ) -> Self
-    where
-        C: boundary::ApiClient,
     {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
         let page =
