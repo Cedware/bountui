@@ -72,18 +72,22 @@ impl<C> ConnectionManager<C> {
         let join_handle = {
             let session_id = session_id.clone();
             tokio::spawn(async move {
-                select! {
+                let stop_result = select! {
                     _ = cancellation_token.cancelled() =>  {
                         info!("Session was cancelled via cancellation token");
-                        connection_handle.stop().await.unwrap();
+                        connection_handle.stop().await
                     },
                     _ = connection_handle.wait() =>  {
                         info!("Connection handle was stopped via connection handle");
+                        Ok(())
                     },
                     _ = session_expired_future => {
                         info!("Boundary session expired");
-                        connection_handle.stop().await.unwrap();
+                        connection_handle.stop().await
                     },
+                };
+                if let Err(e) = stop_result {
+                    error!("Connection handle was stopped with and error {:?}", e)
                 }
                 join_handles.lock().unwrap().remove(&session_id);
                 cancellation_tokens.lock().unwrap().remove(&session_id);
