@@ -1,6 +1,6 @@
 use crate::boundary;
 use crate::boundary::BoundaryConnectionHandle;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use log::{error, info};
 use std::collections::HashMap;
 use std::future::pending;
@@ -13,25 +13,65 @@ use tokio_util::sync::CancellationToken;
 pub enum ConnectionError {
     #[error("Boundary error: {0}")]
     BoundaryError(#[from] boundary::Error),
-    #[error("Failed to stop the connection: The cancellation token was not found")]
-    StopFailedMissingToken,
-    #[error("Failed to stop the connection: The join handle was not found")]
-    StopFailedMissingJoinHandle,
+    #[error("Failed to stop the connection: The session id '{0}' is unknown")]
+    StopFailedUnknownSessionId(String),
+}
+
+struct ConnectionEntry {
+    cancellation_token: CancellationToken,
+    join_handle: JoinHandle<()>,
 }
 
 pub struct ConnectionManager<C> {
-    cancellation_tokens: Arc<Mutex<HashMap<String, CancellationToken>>>,
-    join_handles: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    connections: Arc<Mutex<HashMap<String, ConnectionEntry>>>,
     boundary_client: C,
 }
 
 impl<C> ConnectionManager<C> {
     pub fn new(boundary_client: C) -> Self {
         ConnectionManager {
-            cancellation_tokens: Arc::new(Mutex::new(HashMap::new())),
-            join_handles: Arc::new(Mutex::new(HashMap::new())),
+            connections: Arc::new(Mutex::new(HashMap::new())),
             boundary_client,
         }
+    }
+
+    async fn wait_until_session_is_expired(expiration_time: DateTime<Utc>) {
+        let expires_in = expiration_time - Utc::now();
+        match expires_in.to_std() {
+            Ok(duration) => {
+                tokio::time::sleep(duration).await;
+            }
+            Err(e) => {
+                error!("Could not convert expiration time to duration: {:?}", e);
+                pending::<()>().await;
+            }
+        }
+    }
+
+    fn spawn_connection_task<H>(connections: Arc<Mutex<HashMap<String, ConnectionEntry>>>, mut connection_handle: H, cancellation_token: CancellationToken, expiration_time: DateTime<Utc>, session_id: String) -> JoinHandle<()>
+    where
+        H: BoundaryConnectionHandle + 'static,
+    {
+        tokio::spawn(async move {
+            let stop_result = select! {
+                    _ = cancellation_token.cancelled() =>  {
+                        info!("Session was cancelled via cancellation token");
+                        connection_handle.stop().await
+                    },
+                    _ = connection_handle.wait() =>  {
+                        info!("Connection handle was stopped via connection handle");
+                        Ok(())
+                    },
+                    _ = Self::wait_until_session_is_expired(expiration_time)  => {
+                        info!("Boundary session expired");
+                        connection_handle.stop().await
+                    },
+                };
+            if let Err(e) = stop_result {
+                error!("Connection handle was stopped with and error {:?}", e)
+            }
+            connections.lock().unwrap().remove(&session_id);
+        })
     }
 
     pub async fn connect(
@@ -43,61 +83,11 @@ impl<C> ConnectionManager<C> {
         C: boundary::ApiClient,
         C::ConnectionHandle: 'static,
     {
-        let cancellation_token = CancellationToken::new();
-        let (response, mut connection_handle) =
+        let (response, connection_handle) =
             self.boundary_client.connect(&target_id, port).await?;
-        {
-            let cancellation_token = cancellation_token.clone();
-            self.cancellation_tokens
-                .lock()
-                .unwrap()
-                .insert(response.session_id.clone(), cancellation_token);
-        }
-
-        let session_id = response.session_id.clone();
-        let expires_in = response.expiration - Utc::now();
-        let cancellation_tokens = self.cancellation_tokens.clone();
-        let join_handles = self.join_handles.clone();
-        let session_expired_future = async move {
-            match expires_in.to_std() {
-                Ok(duration) => {
-                    tokio::time::sleep(duration).await;
-                }
-                Err(e) => {
-                    error!("Could not convert expiration time to duration: {:?}", e);
-                    pending::<()>().await;
-                }
-            }
-        };
-        let join_handle = {
-            let session_id = session_id.clone();
-            tokio::spawn(async move {
-                let stop_result = select! {
-                    _ = cancellation_token.cancelled() =>  {
-                        info!("Session was cancelled via cancellation token");
-                        connection_handle.stop().await
-                    },
-                    _ = connection_handle.wait() =>  {
-                        info!("Connection handle was stopped via connection handle");
-                        Ok(())
-                    },
-                    _ = session_expired_future => {
-                        info!("Boundary session expired");
-                        connection_handle.stop().await
-                    },
-                };
-                if let Err(e) = stop_result {
-                    error!("Connection handle was stopped with and error {:?}", e)
-                }
-                join_handles.lock().unwrap().remove(&session_id);
-                cancellation_tokens.lock().unwrap().remove(&session_id);
-            })
-        };
-        self.join_handles
-            .lock()
-            .unwrap()
-            .insert(session_id.clone(), join_handle);
-
+        let cancellation_token = CancellationToken::new();
+        let join_handle = Self::spawn_connection_task(self.connections.clone(), connection_handle, cancellation_token.clone(), response.expiration, response.session_id.clone());
+        self.connections.lock().unwrap().insert(response.session_id.clone(), ConnectionEntry { cancellation_token, join_handle });
         Ok(response)
     }
 
@@ -105,21 +95,12 @@ impl<C> ConnectionManager<C> {
     where
         C: boundary::ApiClient,
     {
-        let join_handle = self
-            .join_handles
-            .lock()
-            .unwrap()
-            .remove(id)
-            .ok_or(ConnectionError::StopFailedMissingJoinHandle)?;
         self.boundary_client.cancel_session(id).await?;
-        let cancellation_token = self
-            .cancellation_tokens
-            .lock()
-            .unwrap()
+        let connection_entry = self.connections.lock().unwrap()
             .remove(id)
-            .ok_or(ConnectionError::StopFailedMissingToken)?;
-        cancellation_token.cancel();
-        let _ = join_handle.await; //Even when the task failed the stop is considered successful
+            .ok_or(ConnectionError::StopFailedUnknownSessionId(id.to_string()))?;
+        connection_entry.cancellation_token.cancel();
+        let _ = connection_entry.join_handle.await; //Even when the task failed the stop is considered successful
         Ok(())
     }
 }
@@ -131,6 +112,7 @@ mod tests {
     use crate::bountui::connection_manager::ConnectionManager;
     use chrono::{TimeDelta, Utc};
     use futures::FutureExt;
+    use mockall::predicate::eq;
     use std::future::pending;
     use std::ops::Add;
     use std::sync::Arc;
@@ -156,9 +138,11 @@ mod tests {
     fn configure_boundary_client(
         session_life_time: TimeDelta,
         mock_connection_handle: Arc<Mutex<MockBoundaryConnectionHandle>>,
+        expect_cancellation: bool,
     ) -> MockApiClient {
+        let session_id = "session-id";
         let connect_response = ConnectResponse {
-            session_id: "session-id".to_owned(),
+            session_id: session_id.to_string(),
             credentials: vec![],
             expiration: Utc::now().add(session_life_time),
         };
@@ -167,9 +151,15 @@ mod tests {
             .expect_connect()
             .return_once(move |_, _| Ok((connect_response, mock_connection_handle)));
 
-        boundary_client
-            .expect_cancel_session()
-            .returning(|_| Ok(()));
+
+        if (expect_cancellation) {
+            boundary_client
+                .expect_cancel_session()
+                .times(1)
+                .with(eq(session_id))
+                .returning(|_| Ok(()));
+        }
+
         boundary_client
     }
 
@@ -180,7 +170,7 @@ mod tests {
 
         let connection_handle = configure_connection_handle(expected_stop_invocations);
         let boundary_client =
-            configure_boundary_client(session_life_time, connection_handle.clone());
+            configure_boundary_client(session_life_time, connection_handle.clone(), false);
         let sut = ConnectionManager::new(boundary_client);
         sut.connect("target_id", 8080).await.unwrap();
         tokio::time::sleep(Duration::from_secs(11)).await;
@@ -193,7 +183,7 @@ mod tests {
         let connection_handle = configure_connection_handle(expected_stop_invocations);
         let session_life_time = TimeDelta::seconds(10);
         let boundary_client =
-            configure_boundary_client(session_life_time, connection_handle.clone());
+            configure_boundary_client(session_life_time, connection_handle.clone(), false);
         let sut = ConnectionManager::new(boundary_client);
         sut.connect("target_id", 8080).await.unwrap();
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -206,7 +196,7 @@ mod tests {
         let connection_handle = configure_connection_handle(expected_stop_invocations);
         let session_life_time = TimeDelta::hours(8);
         let boundary_client =
-            configure_boundary_client(session_life_time, connection_handle.clone());
+            configure_boundary_client(session_life_time, connection_handle.clone(), true);
         let sut = ConnectionManager::new(boundary_client);
         let resp = sut
             .connect("target_id", 8080)
