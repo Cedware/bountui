@@ -14,6 +14,47 @@ targets, and sessions, making Boundary management more accessible directly from 
 
 ---
 
+## 📦 Installation
+
+### 🐧 Linux
+
+#### Arch
+bountui is available in the [AUR](https://aur.archlinux.org/packages/bountui/), so you can install it using your preferred AUR helper.
+In this example, we will use `yay`, but you can use any AUR helper of your choice:
+```bash
+yay -S bountui
+```
+
+### 🍎 MacOS
+
+bountui is not yet available in the official Homebrew catalogue, but you can install it from the [cedware tap](https://github.com/Cedware/homebrew-tap):
+
+```bash
+brew tap cedware/tap
+brew install bountui
+```
+
+This formula will automatically install the boundary CLI too, if you don't have it installed already.
+
+### 🦀 From Source
+
+If you prefer, you can build bountui from source. Ensure you have the Rust toolchain installed
+([rustup](https://rustup.rs/)) and then run:
+
+```bash
+git clone https://github.com/Cedware/bountui.git
+cd bountui
+cargo build --release
+```
+
+After building, you can run bountui directly from the `target/release` directory:
+
+```bash
+./target/release/bountui
+```
+
+---
+
 ## 🔒 Authentication
 
 Currently, bountui has been tested with **OIDC authentication**. Other methods may work but are not guaranteed. Methods
