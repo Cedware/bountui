@@ -35,6 +35,7 @@ brew install bountui
 ```
 
 This formula will automatically install the boundary CLI too, if you don't have it installed already.
+If you want to see bountui in the official Homebrew catalogue, support this project by giving it a star!
 
 ### 🦀 From Source
 
