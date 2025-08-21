@@ -6,7 +6,7 @@ use crate::bountui::components::table::sessions::{
 };
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
-use crate::bountui::connection_manager::ConnectionManager;
+use crate::bountui::connection_manager::{ConnectionManager, DefaultConnectionManager};
 use crate::bountui::widgets::Alert;
 use crate::cross_term::receive_cross_term_events;
 use crate::event_ext::EventExt;
@@ -14,17 +14,18 @@ use crossterm::event::{Event, KeyCode};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use log::error;
 use ratatui::layout::Constraint;
 use ratatui::Frame;
+pub use remember_user_input::*;
 use std::fmt::Display;
 use std::mem;
 use tokio::select;
-pub use remember_user_input::*;
 
 pub mod components;
 pub mod connection_manager;
-mod widgets;
 mod remember_user_input;
+mod widgets;
 
 pub enum Message {
     ShowScopes {
@@ -72,31 +73,37 @@ pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: Remembe
     UserSessions(SessionsPage<LoadUserSessions<B>>),
 }
 
-pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput + Copy> {
+pub struct BountuiApp<
+    C: boundary::ApiClient + Clone + Send + Sync + 'static,
+    R: RememberUserInput + Copy,
+    M: ConnectionManager,
+> {
     page: Page<C, R>,
     boundary_client: C,
     history: Vec<Page<C, R>>,
-    connection_manager: ConnectionManager<C>,
+    connection_manager: M,
     alert: Option<(String, String)>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     message_rx: tokio::sync::mpsc::Receiver<Message>,
-    pub is_finished: bool,
+    cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
     user_id: String,
     navigation_input: Option<NavigationInput>,
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
-    remember_user_input: R
+    remember_user_input: R,
 }
 
-impl<C, R: RememberUserInput + Copy> BountuiApp<C, R>
+impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
 where
     C: boundary::ApiClient + Clone + Send + Sync,
-    C::ConnectionHandle: Send
+    C::ConnectionHandle: Send,
+    M: ConnectionManager,
 {
     pub async fn new(
         boundary_client: C,
         user_id: String,
-        connection_manager: ConnectionManager<C>,
+        connection_manager: M,
         remember_user_input: R,
+        cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
     ) -> Self
     {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
@@ -112,10 +119,10 @@ where
             alert: None,
             message_tx,
             message_rx,
-            is_finished: false,
+            cross_term_event_rx,
             navigation_input: None,
             tasks: FuturesUnordered::new(),
-            remember_user_input
+            remember_user_input,
         }
     }
 
@@ -143,7 +150,7 @@ where
                     self.message_tx.clone(),
                     self.boundary_client.clone(),
                 )
-                .await,
+                    .await,
             ),
             false,
         );
@@ -151,12 +158,15 @@ where
 
     async fn show_targets(&mut self, parent: Scope) {
         self.navigate_to(
-            Page::Targets(TargetsPage::new(
-                parent,
-                self.message_tx.clone(),
-                self.boundary_client.clone(),
-                self.remember_user_input
-            ).await),
+            Page::Targets(
+                TargetsPage::new(
+                    parent,
+                    self.message_tx.clone(),
+                    self.boundary_client.clone(),
+                    self.remember_user_input,
+                )
+                    .await,
+            ),
             false,
         );
     }
@@ -184,7 +194,7 @@ where
                     ),
                     self.message_tx.clone(),
                 )
-                .await,
+                    .await,
             ),
             true,
         );
@@ -253,11 +263,6 @@ where
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
-        if event.is_stop() {
-            self.is_finished = true;
-            return;
-        }
-
         if self.alert.is_some() && event.is_enter() {
             self.alert = None
         }
@@ -312,7 +317,7 @@ where
                             ),
                             self.message_tx.clone(),
                         )
-                        .await,
+                            .await,
                     ),
                     false,
                 );
@@ -363,41 +368,30 @@ where
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
 
-        let mut cross_term_event_receiver = receive_cross_term_events();
 
-        while !self.is_finished {
+        loop {
             terminal
                 .draw(|frame| {
                     self.view(frame);
                 })
                 .unwrap();
-            if self.tasks.is_empty() {
-                select! {
-                    message = self.message_rx.recv() => {
-                        if let Some(message) = message {
-                            self.handle_message(message).await;
-                        }
-                    }
-                    event = cross_term_event_receiver.recv() => {
-                        if let Some(event) = event {
-                            self.handle_event(&event).await;
-                        }
+            select! {
+                message = self.message_rx.recv() => {
+                    if let Some(message) = message {
+                        self.handle_message(message).await;
                     }
                 }
-            } else {
-                select! {
-                    message = self.message_rx.recv() => {
-                        if let Some(message) = message {
-                            self.handle_message(message).await;
+                event = self.cross_term_event_rx.recv() => {
+                    if let Some(event) = event {
+                        if event.is_stop() {
+                            let _ = self.connection_manager.shutdown().await
+                                .map_err(|e| error!("Failed to shutdown connection manager: {:?}", e));
+                            break;
                         }
+                        self.handle_event(&event).await;
                     }
-                    event = cross_term_event_receiver.recv() => {
-                        if let Some(event) = event {
-                            self.handle_event(&event).await;
-                        }
-                    },
-                    _ = self.tasks.next() => {}
-                }
+                },
+                _ = self.tasks.next() => {}
             }
         }
     }
