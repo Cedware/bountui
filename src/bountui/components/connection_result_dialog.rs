@@ -10,6 +10,7 @@ use ratatui::prelude::{Alignment, Stylize};
 use ratatui::widgets::Clear;
 use ratatui::{layout::{Constraint, Layout}, widgets::{Block, BorderType, Borders}, Frame};
 use std::rc::Rc;
+use log::info;
 use tokio::sync::mpsc;
 
 pub struct ConnectionResultDialog {
@@ -116,6 +117,7 @@ impl ConnectionResultDialog {
     }
 
     pub async fn copy_selected_username_to_clipboard(&self) {
+        info!("Copying username to clipboard");
         if let Some(selected_item) = self.table.selected_item() {
             let username = selected_item.credential.username.clone();
             match Clipboard::new().and_then(|mut c| c.set_text(username)) {
@@ -133,6 +135,7 @@ impl ConnectionResultDialog {
     }
 
     pub async fn copy_selected_password_to_clipboard(&self) {
+        info!("Copying password to clipboard");
         if let Some(selected_item) = self.table.selected_item() {
             let password = selected_item.credential.password.clone();
             match Clipboard::new().and_then(|mut c| c.set_text(password)) {
