@@ -108,3 +108,37 @@ where
         self.lock().await.stop().await
     }
 }
+
+
+impl<T: ApiClient> ApiClient for Arc<T> {
+
+    type ConnectionHandle = T::ConnectionHandle;
+
+    fn get_scopes(&self, parent: Option<&str>, recursive: bool) -> impl Future<Output=Result<Vec<Scope>, Error>> + Send {
+        T::get_scopes(self, parent, recursive)
+    }
+
+    fn get_targets(&self, scope: Option<&str>) -> impl Future<Output=Result<Vec<Target>, Error>> + Send {
+        T::get_targets(self, scope)
+    }
+
+    fn get_sessions(&self, scope: &str) -> impl Future<Output=Result<Vec<Session>, Error>> + Send + Sync {
+        T::get_sessions(self, scope)
+    }
+
+    fn get_user_sessions(&self, user_id: &str) -> impl Future<Output=Result<Vec<Session>, Error>> + Send + Sync {
+        T::get_user_sessions(self, user_id)
+    }
+
+    async fn connect(&self, target_id: &str, port: u16) -> Result<(ConnectResponse, Self::ConnectionHandle), Error> {
+        T::connect(self, target_id, port).await
+    }
+
+    async fn cancel_session(&self, session_id: &str) -> Result<(), Error> {
+        T::cancel_session(self, session_id).await
+    }
+
+    async fn authenticate(&self) -> Result<AuthenticateResponse, Error> {
+        T::authenticate(self).await
+    }
+}

@@ -11,7 +11,6 @@ use crate::bountui::{BountuiApp, UserInputsPath};
 use crate::cross_term::receive_cross_term_events;
 use crate::util::clipboard::{ClipboardAccess, ArboardClipboard, NoopClipboard};
 use std::env;
-use std::rc::Rc;
 use log::error;
 
 

@@ -1,7 +1,4 @@
-use std::cell::RefCell;
-
-/// Trait to abstract clipboard operations used by the UI.
-/// Allows swapping in a no-op implementation for tests or when initialization fails.
+#[cfg_attr(test, mockall::automock)]
 pub trait ClipboardAccess {
     fn set_text(&mut self, text: String) -> Result<(), String>;
 }

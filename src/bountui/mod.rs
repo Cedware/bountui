@@ -6,11 +6,9 @@ use crate::bountui::components::table::sessions::{
 };
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
-use crate::bountui::connection_manager::{ConnectionManager, DefaultConnectionManager};
+use crate::bountui::connection_manager::{ConnectionManager};
 use crate::bountui::widgets::Alert;
-use crate::cross_term::receive_cross_term_events;
 use crate::util::clipboard::ClipboardAccess;
-use std::rc::Rc;
 use crate::event_ext::EventExt;
 use crossterm::event::{Event, KeyCode};
 use futures::future::BoxFuture;
@@ -407,6 +405,77 @@ where
                 },
                 _ = self.tasks.next() => {}
             }
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bountui::connection_manager::MockConnectionManager;
+    use crate::util::clipboard::MockClipboardAccess;
+    use mockall::predicate::eq;
+    use std::sync::Arc;
+    use crate::boundary::client::MockApiClient;
+
+    #[tokio::test]
+    async fn set_clipboard_success_clears_alert() {
+        let mut mock_clip = MockClipboardAccess::new();
+        mock_clip
+            .expect_set_text()
+            .with(eq("hello".to_string()))
+            .returning(|_| Ok(()));
+
+        let boundary_client: Arc<MockApiClient> = Arc::new(MockApiClient::new());
+        let connection_manager = MockConnectionManager::new();
+        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
+        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
+
+        let mut app = BountuiApp::new(
+            boundary_client,
+            "user-1".to_string(),
+            connection_manager,
+            remember_user_input,
+            evt_rx,
+            Box::new(mock_clip),
+        ).await;
+
+        app.handle_message(Message::SetClipboard("hello".to_string())).await;
+
+        assert!(app.alert.is_none(), "Alert should not be set on clipboard success");
+    }
+
+    #[tokio::test]
+    async fn set_clipboard_error_sets_alert() {
+        let mut mock_clip = MockClipboardAccess::new();
+        mock_clip
+            .expect_set_text()
+            .with(eq("oops".to_string()))
+            .returning(|_| Err("boom".to_string()));
+
+        let boundary_client: Arc<MockApiClient> = Arc::new(MockApiClient::new());
+        let connection_manager = MockConnectionManager::new();
+        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
+        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
+
+        let mut app = BountuiApp::new(
+            boundary_client,
+            "user-1".to_string(),
+            connection_manager,
+            remember_user_input,
+            evt_rx,
+            Box::new(mock_clip),
+        ).await;
+
+        app.handle_message(Message::SetClipboard("oops".to_string())).await;
+
+        match &app.alert {
+            Some((title, msg)) => {
+                assert_eq!(title, "Clipboard Error");
+                assert_eq!(msg, "Failed to set clipboard text: boom");
+            }
+            None => panic!("Expected clipboard error alert to be set"),
         }
     }
 }
