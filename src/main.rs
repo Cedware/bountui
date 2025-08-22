@@ -3,14 +3,19 @@ mod bountui;
 pub mod event_ext;
 mod util;
 mod cross_term;
+#[cfg(test)]
+mod mock;
 
 use crate::boundary::ApiClient;
 use crate::bountui::{BountuiApp, UserInputsPath};
+use crate::cross_term::receive_cross_term_events;
+use crate::util::clipboard::{ClipboardAccess, ArboardClipboard, BrokenClipboard};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use flexi_logger::LoggerHandle;
 use anyhow::Context;
+use log::error;
 
 fn init_logger() -> anyhow::Result<LoggerHandle> {
     // Initialize logging with flexi_logger
@@ -64,7 +69,7 @@ async fn main() {
         std::process::exit(1);
     }
     let boundary_client = boundary::CliClient::default();
-    let connection_manager = bountui::connection_manager::ConnectionManager::new(boundary_client.clone());
+    let connection_manager = bountui::connection_manager::DefaultConnectionManager::new(boundary_client.clone());
     let auth_result = boundary_client.authenticate().await.unwrap();
 
     //This is safe because this is the only place we set the environment variable
@@ -82,8 +87,23 @@ async fn main() {
         None
     };
 
-    let mut app = BountuiApp::new(boundary_client, auth_result.attributes.user_id, connection_manager, user_inputs_path).await;
+    let cross_term_event_rx = receive_cross_term_events();
+
+    let clipboard: Box<dyn ClipboardAccess> = match ArboardClipboard::new() {
+        Ok(c) => Box::new(c),
+        Err(e) => {
+            error!("Failed to initialize clipboard: {}. Using BrokenArboardClipboard fallback.", e);
+            Box::new(BrokenClipboard::new(e))
+        }
+    };
+
+    let mut app = BountuiApp::new(
+        boundary_client,
+        auth_result.attributes.user_id,
+        connection_manager,
+        user_inputs_path,
+        cross_term_event_rx,
+        clipboard,
+    ).await;
     let _ = app.run().await;
-
-
 }

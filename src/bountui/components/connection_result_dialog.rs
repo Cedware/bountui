@@ -3,7 +3,6 @@ use crate::boundary::CredentialEntry;
 use crate::bountui::components::table::{Action, FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
-use arboard::Clipboard;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::Flex;
 use ratatui::prelude::{Alignment, Stylize};
@@ -15,7 +14,7 @@ use tokio::sync::mpsc;
 
 pub struct ConnectionResultDialog {
     table: TablePage<boundary::CredentialEntry>,
-    message_tx: mpsc::Sender<Message>
+    message_tx: mpsc::Sender<Message>,
 }
 
 impl ConnectionResultDialog {
@@ -69,7 +68,7 @@ impl ConnectionResultDialog {
 
         Self {
             table,
-            message_tx
+            message_tx,
         }
     }
 
@@ -120,17 +119,10 @@ impl ConnectionResultDialog {
         info!("Copying username to clipboard");
         if let Some(selected_item) = self.table.selected_item() {
             let username = selected_item.credential.username.clone();
-            match Clipboard::new().and_then(|mut c| c.set_text(username)) {
-                Ok(_) => {}
-                Err(e) => {
-                    let _ = self.message_tx.send(
-                        Message::ShowAlert(
-                            "Clipboard Error".to_string(),
-                            format!("Failed to copy username: {e}")
-                        )
-                    ).await;
-                }
-            }
+            let _ = self
+                .message_tx
+                .send(Message::SetClipboard(username))
+                .await;
         }
     }
 
@@ -138,17 +130,10 @@ impl ConnectionResultDialog {
         info!("Copying password to clipboard");
         if let Some(selected_item) = self.table.selected_item() {
             let password = selected_item.credential.password.clone();
-            match Clipboard::new().and_then(|mut c| c.set_text(password)) {
-                Ok(_) => {}
-                Err(e) => {
-                    let _ = self.message_tx.send(
-                        Message::ShowAlert(
-                            "Clipboard Error".to_string(),
-                            format!("Failed to copy password: {e}")
-                        )
-                    ).await;
-                }
-            }
+            let _ = self
+                .message_tx
+                .send(Message::SetClipboard(password))
+                .await;
         }
     }
 }
@@ -163,5 +148,45 @@ impl FilterItems<CredentialEntry> for TablePage<CredentialEntry> {
     fn matches(item: &CredentialEntry, search: &str) -> bool {
         Self::match_str(&item.credential.username, search)
             || Self::match_str(&item.credential_source.name, search)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boundary::{ConnectResponse, Credential, CredentialEntry, CredentialSource};
+    use chrono::Utc;
+
+    fn sample_response(username: &str, password: &str) -> ConnectResponse {
+        ConnectResponse {
+            credentials: vec![CredentialEntry {
+                credential: Credential { username: username.to_string(), password: password.to_string() },
+                credential_source: CredentialSource { name: "test-source".to_string() },
+            }],
+            session_id: "s-123".to_string(),
+            expiration: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_username_sends_set_clipboard_message() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let dialog = ConnectionResultDialog::new(sample_response("user1", "pass1"), tx);
+        dialog.copy_selected_username_to_clipboard().await;
+        match rx.recv().await {
+            Some(Message::SetClipboard(text)) => assert_eq!(text, "user1"),
+            _ => panic!("Expected SetClipboard('user1') message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_password_sends_set_clipboard_message() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let dialog = ConnectionResultDialog::new(sample_response("user2", "pass2"), tx);
+        dialog.copy_selected_password_to_clipboard().await;
+        match rx.recv().await {
+            Some(Message::SetClipboard(text)) => assert_eq!(text, "pass2"),
+            _ => panic!("Expected SetClipboard('pass2') message"),
+        }
     }
 }
