@@ -1,3 +1,5 @@
+pub mod clipboard;
+
 use std::future::Future;
 use tokio::sync::mpsc;
 

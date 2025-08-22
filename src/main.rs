@@ -9,7 +9,10 @@ mod mock;
 use crate::boundary::ApiClient;
 use crate::bountui::{BountuiApp, UserInputsPath};
 use crate::cross_term::receive_cross_term_events;
+use crate::util::clipboard::{ClipboardAccess, ArboardClipboard, BrokenClipboard};
 use std::env;
+use log::error;
+
 
 #[tokio::main]
 async fn main() {
@@ -33,6 +36,22 @@ async fn main() {
     };
 
     let cross_term_event_rx = receive_cross_term_events();
-    let mut app = BountuiApp::new(boundary_client, auth_result.attributes.user_id, connection_manager, user_inputs_path, cross_term_event_rx).await;
+
+    let clipboard: Box<dyn ClipboardAccess> = match ArboardClipboard::new() {
+        Ok(c) => Box::new(c),
+        Err(e) => {
+            error!("Failed to initialize clipboard: {}. Using BrokenArboardClipboard fallback.", e);
+            Box::new(BrokenClipboard::new(e))
+        }
+    };
+
+    let mut app = BountuiApp::new(
+        boundary_client,
+        auth_result.attributes.user_id,
+        connection_manager,
+        user_inputs_path,
+        cross_term_event_rx,
+        clipboard,
+    ).await;
     let _ = app.run().await;
 }

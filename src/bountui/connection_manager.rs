@@ -1,5 +1,5 @@
 use crate::boundary;
-use crate::boundary::{ApiClient, BoundaryConnectionHandle, ConnectResponse, Error};
+use crate::boundary::{ApiClient, BoundaryConnectionHandle};
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
 use log::{error, info};
