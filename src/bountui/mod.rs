@@ -9,6 +9,8 @@ use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::{ConnectionManager, DefaultConnectionManager};
 use crate::bountui::widgets::Alert;
 use crate::cross_term::receive_cross_term_events;
+use crate::util::clipboard::ClipboardAccess;
+use std::rc::Rc;
 use crate::event_ext::EventExt;
 use crossterm::event::{Event, KeyCode};
 use futures::future::BoxFuture;
@@ -48,6 +50,7 @@ pub enum Message {
     },
     GoBack,
     ShowAlert(String, String),
+    SetClipboard(String),
     Targets(TargetsPageMessage),
     Scopes(ScopesPageMessage),
     SessionsPage(SessionsPageMessage),
@@ -90,6 +93,7 @@ pub struct BountuiApp<
     navigation_input: Option<NavigationInput>,
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
     remember_user_input: R,
+    clipboard: Box<dyn ClipboardAccess>,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -104,6 +108,7 @@ where
         connection_manager: M,
         remember_user_input: R,
         cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
+        clipboard: Box<dyn ClipboardAccess>,
     ) -> Self
     {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
@@ -123,6 +128,7 @@ where
             navigation_input: None,
             tasks: FuturesUnordered::new(),
             remember_user_input,
+            clipboard,
         }
     }
 
@@ -359,6 +365,14 @@ where
             Message::Scopes(scopes_message) => {
                 if let Page::Scopes(scopes_page) = &mut self.page {
                     scopes_page.handle_message(scopes_message).await;
+                }
+            }
+            Message::SetClipboard(text) => {
+                if let Err(e) = self.clipboard.set_text(text) {
+                    self.alert = Some((
+                        "Clipboard Error".to_string(),
+                        format!("Failed to set clipboard text: {e}"),
+                    ));
                 }
             }
         }

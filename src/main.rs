@@ -9,7 +9,11 @@ mod mock;
 use crate::boundary::ApiClient;
 use crate::bountui::{BountuiApp, UserInputsPath};
 use crate::cross_term::receive_cross_term_events;
+use crate::util::clipboard::{ClipboardAccess, ArboardClipboard, NoopClipboard};
 use std::env;
+use std::rc::Rc;
+use log::error;
+
 
 #[tokio::main]
 async fn main() {
@@ -33,6 +37,22 @@ async fn main() {
     };
 
     let cross_term_event_rx = receive_cross_term_events();
-    let mut app = BountuiApp::new(boundary_client, auth_result.attributes.user_id, connection_manager, user_inputs_path, cross_term_event_rx).await;
+
+    let clipboard: Box<dyn ClipboardAccess> = match ArboardClipboard::new() {
+        Ok(c) => Box::new(c),
+        Err(e) => {
+            error!("Failed to initialize clipboard: {}. Falling back to NoopClipboard.", e);
+            Box::new(NoopClipboard::default())
+        }
+    };
+
+    let mut app = BountuiApp::new(
+        boundary_client,
+        auth_result.attributes.user_id,
+        connection_manager,
+        user_inputs_path,
+        cross_term_event_rx,
+        clipboard,
+    ).await;
     let _ = app.run().await;
 }

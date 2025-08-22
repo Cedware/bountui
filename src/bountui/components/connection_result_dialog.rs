@@ -3,7 +3,6 @@ use crate::boundary::CredentialEntry;
 use crate::bountui::components::table::{Action, FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
-use arboard::Clipboard;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::layout::Flex;
 use ratatui::prelude::{Alignment, Stylize};
@@ -14,7 +13,7 @@ use tokio::sync::mpsc;
 
 pub struct ConnectionResultDialog {
     table: TablePage<boundary::CredentialEntry>,
-    message_tx: mpsc::Sender<Message>
+    message_tx: mpsc::Sender<Message>,
 }
 
 impl ConnectionResultDialog {
@@ -68,7 +67,7 @@ impl ConnectionResultDialog {
 
         Self {
             table,
-            message_tx
+            message_tx,
         }
     }
 
@@ -118,34 +117,20 @@ impl ConnectionResultDialog {
     pub async fn copy_selected_username_to_clipboard(&self) {
         if let Some(selected_item) = self.table.selected_item() {
             let username = selected_item.credential.username.clone();
-            match Clipboard::new().and_then(|mut c| c.set_text(username)) {
-                Ok(_) => {}
-                Err(e) => {
-                    let _ = self.message_tx.send(
-                        Message::ShowAlert(
-                            "Clipboard Error".to_string(),
-                            format!("Failed to copy username: {e}")
-                        )
-                    ).await;
-                }
-            }
+            let _ = self
+                .message_tx
+                .send(Message::SetClipboard(username))
+                .await;
         }
     }
 
     pub async fn copy_selected_password_to_clipboard(&self) {
         if let Some(selected_item) = self.table.selected_item() {
             let password = selected_item.credential.password.clone();
-            match Clipboard::new().and_then(|mut c| c.set_text(password)) {
-                Ok(_) => {}
-                Err(e) => {
-                    let _ = self.message_tx.send(
-                        Message::ShowAlert(
-                            "Clipboard Error".to_string(),
-                            format!("Failed to copy password: {e}")
-                        )
-                    ).await;
-                }
-            }
+            let _ = self
+                .message_tx
+                .send(Message::SetClipboard(password))
+                .await;
         }
     }
 }
