@@ -147,3 +147,43 @@ impl FilterItems<CredentialEntry> for TablePage<CredentialEntry> {
             || Self::match_str(&item.credential_source.name, search)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boundary::{ConnectResponse, Credential, CredentialEntry, CredentialSource};
+    use chrono::Utc;
+
+    fn sample_response(username: &str, password: &str) -> ConnectResponse {
+        ConnectResponse {
+            credentials: vec![CredentialEntry {
+                credential: Credential { username: username.to_string(), password: password.to_string() },
+                credential_source: CredentialSource { name: "test-source".to_string() },
+            }],
+            session_id: "s-123".to_string(),
+            expiration: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_username_sends_set_clipboard_message() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let dialog = ConnectionResultDialog::new(sample_response("user1", "pass1"), tx);
+        dialog.copy_selected_username_to_clipboard().await;
+        match rx.recv().await {
+            Some(Message::SetClipboard(text)) => assert_eq!(text, "user1"),
+            _ => panic!("Expected SetClipboard('user1') message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_password_sends_set_clipboard_message() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let dialog = ConnectionResultDialog::new(sample_response("user2", "pass2"), tx);
+        dialog.copy_selected_password_to_clipboard().await;
+        match rx.recv().await {
+            Some(Message::SetClipboard(text)) => assert_eq!(text, "pass2"),
+            _ => panic!("Expected SetClipboard('pass2') message"),
+        }
+    }
+}
