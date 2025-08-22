@@ -149,6 +149,6 @@ jobs:
           sed -i "s|^  sha256 \".*\"|  sha256 \"${checksum}\"|" Formula/bountui.rb
           git config --global user.email "cedware-dev@protonmail.com"
           git config --global user.name "Cedric Krause"
-          git add .
+          git add Formula/bountui.rb
           git commit -m "Updated bountui formula to version ${{ steps.get_version.outputs.new_release_version }}"
           git push
