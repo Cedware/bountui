@@ -52,8 +52,8 @@ jobs:
           retention-days: 1
   release:
     needs:
-        - build
-        - test
+      - build
+      - test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     outputs:
@@ -137,7 +137,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: cedware/homebrew-formulas
+          repository: cedware/homebrew-tap
           token: ${{ secrets.PAT_GITHUB }}
       - name: update contents
         run: |
