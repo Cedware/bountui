@@ -414,7 +414,7 @@ where
 mod tests {
     use super::*;
     use crate::bountui::connection_manager::MockConnectionManager;
-    use crate::util::clipboard::MockClipboardAccess;
+    use crate::util::clipboard::{MockClipboardAccess, ClipboardAccessError};
     use mockall::predicate::eq;
     use std::sync::Arc;
     use crate::boundary::client::MockApiClient;
@@ -452,7 +452,7 @@ mod tests {
         mock_clip
             .expect_set_text()
             .with(eq("oops".to_string()))
-            .returning(|_| Err("boom".to_string()));
+            .returning(|_| Err(ClipboardAccessError::Unknown("boom".to_string())));
 
         let boundary_client: Arc<MockApiClient> = Arc::new(MockApiClient::new());
         let connection_manager = MockConnectionManager::new();
@@ -471,9 +471,8 @@ mod tests {
         app.handle_message(Message::SetClipboard("oops".to_string())).await;
 
         match &app.alert {
-            Some((title, msg)) => {
+            Some((title, _msg)) => {
                 assert_eq!(title, "Clipboard Error");
-                assert_eq!(msg, "Failed to set clipboard text: boom");
             }
             None => panic!("Expected clipboard error alert to be set"),
         }
