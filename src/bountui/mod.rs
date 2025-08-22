@@ -6,25 +6,26 @@ use crate::bountui::components::table::sessions::{
 };
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
-use crate::bountui::connection_manager::ConnectionManager;
+use crate::bountui::connection_manager::{ConnectionManager};
 use crate::bountui::widgets::Alert;
-use crate::cross_term::receive_cross_term_events;
+use crate::util::clipboard::ClipboardAccess;
 use crate::event_ext::EventExt;
 use crossterm::event::{Event, KeyCode};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use log::error;
 use ratatui::layout::Constraint;
 use ratatui::Frame;
+pub use remember_user_input::*;
 use std::fmt::Display;
 use std::mem;
 use tokio::select;
-pub use remember_user_input::*;
 
 pub mod components;
 pub mod connection_manager;
-mod widgets;
 mod remember_user_input;
+mod widgets;
 
 pub enum Message {
     ShowScopes {
@@ -47,6 +48,7 @@ pub enum Message {
     },
     GoBack,
     ShowAlert(String, String),
+    SetClipboard(String),
     Targets(TargetsPageMessage),
     Scopes(ScopesPageMessage),
     SessionsPage(SessionsPageMessage),
@@ -72,33 +74,40 @@ pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: Remembe
     UserSessions(SessionsPage<LoadUserSessions<B>>),
 }
 
-pub struct BountuiApp<C: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput + Copy> {
+pub struct BountuiApp<
+    C: boundary::ApiClient + Clone + Send + Sync + 'static,
+    R: RememberUserInput + Copy,
+    M: ConnectionManager,
+> {
     page: Page<C, R>,
     boundary_client: C,
     history: Vec<Page<C, R>>,
-    connection_manager: ConnectionManager<C>,
+    connection_manager: M,
     alert: Option<(String, String)>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     message_rx: tokio::sync::mpsc::Receiver<Message>,
-    pub is_finished: bool,
+    cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
     user_id: String,
     navigation_input: Option<NavigationInput>,
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
-    remember_user_input: R
+    remember_user_input: R,
+    clipboard: Box<dyn ClipboardAccess>,
 }
 
-impl<C, R: RememberUserInput + Copy> BountuiApp<C, R>
+impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
 where
     C: boundary::ApiClient + Clone + Send + Sync,
+    C::ConnectionHandle: Send,
+    M: ConnectionManager,
 {
     pub async fn new(
         boundary_client: C,
         user_id: String,
-        connection_manager: ConnectionManager<C>,
+        connection_manager: M,
         remember_user_input: R,
+        cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
+        clipboard: Box<dyn ClipboardAccess>,
     ) -> Self
-    where
-        C: boundary::ApiClient,
     {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
         let page =
@@ -113,10 +122,11 @@ where
             alert: None,
             message_tx,
             message_rx,
-            is_finished: false,
+            cross_term_event_rx,
             navigation_input: None,
             tasks: FuturesUnordered::new(),
-            remember_user_input
+            remember_user_input,
+            clipboard,
         }
     }
 
@@ -144,7 +154,7 @@ where
                     self.message_tx.clone(),
                     self.boundary_client.clone(),
                 )
-                .await,
+                    .await,
             ),
             false,
         );
@@ -152,12 +162,15 @@ where
 
     async fn show_targets(&mut self, parent: Scope) {
         self.navigate_to(
-            Page::Targets(TargetsPage::new(
-                parent,
-                self.message_tx.clone(),
-                self.boundary_client.clone(),
-                self.remember_user_input
-            ).await),
+            Page::Targets(
+                TargetsPage::new(
+                    parent,
+                    self.message_tx.clone(),
+                    self.boundary_client.clone(),
+                    self.remember_user_input,
+                )
+                    .await,
+            ),
             false,
         );
     }
@@ -185,7 +198,7 @@ where
                     ),
                     self.message_tx.clone(),
                 )
-                .await,
+                    .await,
             ),
             true,
         );
@@ -254,11 +267,6 @@ where
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
-        if event.is_stop() {
-            self.is_finished = true;
-            return;
-        }
-
         if self.alert.is_some() && event.is_enter() {
             self.alert = None
         }
@@ -313,7 +321,7 @@ where
                             ),
                             self.message_tx.clone(),
                         )
-                        .await,
+                            .await,
                     ),
                     false,
                 );
@@ -357,6 +365,14 @@ where
                     scopes_page.handle_message(scopes_message).await;
                 }
             }
+            Message::SetClipboard(text) => {
+                if let Err(e) = self.clipboard.set_text(text) {
+                    self.alert = Some((
+                        "Clipboard Error".to_string(),
+                        format!("Failed to set clipboard text: {e}"),
+                    ));
+                }
+            }
         }
     }
 
@@ -364,42 +380,101 @@ where
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
 
-        let mut cross_term_event_receiver = receive_cross_term_events();
 
-        while !self.is_finished {
+        loop {
             terminal
                 .draw(|frame| {
                     self.view(frame);
                 })
                 .unwrap();
-            if self.tasks.is_empty() {
-                select! {
-                    message = self.message_rx.recv() => {
-                        if let Some(message) = message {
-                            self.handle_message(message).await;
-                        }
-                    }
-                    event = cross_term_event_receiver.recv() => {
-                        if let Some(event) = event {
-                            self.handle_event(&event).await;
-                        }
+            select! {
+                message = self.message_rx.recv() => {
+                    if let Some(message) = message {
+                        self.handle_message(message).await;
                     }
                 }
-            } else {
-                select! {
-                    message = self.message_rx.recv() => {
-                        if let Some(message) = message {
-                            self.handle_message(message).await;
+                event = self.cross_term_event_rx.recv() => {
+                    if let Some(event) = event {
+                        if event.is_stop() {
+                            let _ = self.connection_manager.shutdown().await
+                                .map_err(|e| error!("Failed to shutdown connection manager: {:?}", e));
+                            break;
                         }
+                        self.handle_event(&event).await;
                     }
-                    event = cross_term_event_receiver.recv() => {
-                        if let Some(event) = event {
-                            self.handle_event(&event).await;
-                        }
-                    },
-                    _ = self.tasks.next() => {}
-                }
+                },
+                _ = self.tasks.next() => {}
             }
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bountui::connection_manager::MockConnectionManager;
+    use crate::util::clipboard::{MockClipboardAccess, ClipboardAccessError};
+    use mockall::predicate::eq;
+    use std::sync::Arc;
+    use crate::boundary::client::MockApiClient;
+
+    #[tokio::test]
+    async fn set_clipboard_success_clears_alert() {
+        let mut mock_clip = MockClipboardAccess::new();
+        mock_clip
+            .expect_set_text()
+            .with(eq("hello".to_string()))
+            .returning(|_| Ok(()));
+
+        let boundary_client: Arc<MockApiClient> = Arc::new(MockApiClient::new());
+        let connection_manager = MockConnectionManager::new();
+        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
+        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
+
+        let mut app = BountuiApp::new(
+            boundary_client,
+            "user-1".to_string(),
+            connection_manager,
+            remember_user_input,
+            evt_rx,
+            Box::new(mock_clip),
+        ).await;
+
+        app.handle_message(Message::SetClipboard("hello".to_string())).await;
+
+        assert!(app.alert.is_none(), "Alert should not be set on clipboard success");
+    }
+
+    #[tokio::test]
+    async fn set_clipboard_error_sets_alert() {
+        let mut mock_clip = MockClipboardAccess::new();
+        mock_clip
+            .expect_set_text()
+            .with(eq("oops".to_string()))
+            .returning(|_| Err(ClipboardAccessError::Unknown("boom".to_string())));
+
+        let boundary_client: Arc<MockApiClient> = Arc::new(MockApiClient::new());
+        let connection_manager = MockConnectionManager::new();
+        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
+        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
+
+        let mut app = BountuiApp::new(
+            boundary_client,
+            "user-1".to_string(),
+            connection_manager,
+            remember_user_input,
+            evt_rx,
+            Box::new(mock_clip),
+        ).await;
+
+        app.handle_message(Message::SetClipboard("oops".to_string())).await;
+
+        match &app.alert {
+            Some((title, _msg)) => {
+                assert_eq!(title, "Clipboard Error");
+            }
+            None => panic!("Expected clipboard error alert to be set"),
         }
     }
 }

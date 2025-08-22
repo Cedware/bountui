@@ -11,6 +11,7 @@ struct UserInputs {
 }
 
 
+#[cfg_attr(test, mockall::automock)]
 pub trait RememberUserInput {
     fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()>;
     fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>>;
@@ -52,7 +53,7 @@ fn write_user_inputs<P: AsRef<Path>>(path: P, user_inputs: &UserInputs) -> anyho
 #[derive(Copy, Clone)]
 pub struct UserInputsPath<P>(pub P);
 
-impl <P: AsRef<Path>> From<P> for UserInputsPath<P> {
+impl<P: AsRef<Path>> From<P> for UserInputsPath<P> {
     fn from(value: P) -> Self {
         UserInputsPath(value)
     }
@@ -78,7 +79,10 @@ where
     }
 }
 
-impl<P> RememberUserInput for Option<P> where P: RememberUserInput {
+impl<P> RememberUserInput for Option<P>
+where
+    P: RememberUserInput,
+{
     fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()> {
         if let Some(inner_self) = self {
             inner_self.store_local_port(target, port)
@@ -90,8 +94,7 @@ impl<P> RememberUserInput for Option<P> where P: RememberUserInput {
     fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>> {
         if let Some(inner_self) = self {
             inner_self.get_local_port(target_id)
-        }
-        else {
+        } else {
             Ok(None)
         }
     }
@@ -99,10 +102,10 @@ impl<P> RememberUserInput for Option<P> where P: RememberUserInput {
 
 #[cfg(test)]
 mod tests {
+    use crate::bountui::{RememberUserInput, UserInputsPath};
     use std::io::Write;
     use std::path::Path;
     use tempfile::NamedTempFile;
-    use crate::bountui::{RememberUserInput, UserInputsPath};
 
     const JSON: &str = "{\"local_ports\": {\"target_id\": 8080}}";
 
@@ -146,5 +149,4 @@ mod tests {
         assert_eq!(Some(8080), target_id_1_port);
         assert_eq!(Some(8081), target_id_2_port);
     }
-
 }
