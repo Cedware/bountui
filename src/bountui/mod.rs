@@ -6,10 +6,10 @@ use crate::bountui::components::table::sessions::{
 };
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
-use crate::bountui::connection_manager::{ConnectionManager};
+use crate::bountui::connection_manager::ConnectionManager;
 use crate::bountui::widgets::Alert;
-use crate::util::clipboard::ClipboardAccess;
 use crate::event_ext::EventExt;
+use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
@@ -406,6 +406,8 @@ where
                 _ = self.tasks.next() => {}
             }
         }
+
+        ratatui::restore()
     }
 }
 
@@ -413,11 +415,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boundary::client::MockApiClient;
     use crate::bountui::connection_manager::MockConnectionManager;
-    use crate::util::clipboard::{MockClipboardAccess, ClipboardAccessError};
+    use crate::util::clipboard::{ClipboardAccessError, MockClipboardAccess};
     use mockall::predicate::eq;
     use std::sync::Arc;
-    use crate::boundary::client::MockApiClient;
 
     #[tokio::test]
     async fn set_clipboard_success_clears_alert() {
