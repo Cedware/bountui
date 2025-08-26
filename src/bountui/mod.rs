@@ -403,7 +403,7 @@ where
                         self.handle_event(&event).await;
                     }
                 },
-                _ = self.tasks.next() => {}
+                _ = self.tasks.next(), if !self.tasks.is_empty() => {}
             }
         }
 
