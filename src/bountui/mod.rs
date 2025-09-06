@@ -139,11 +139,12 @@ where
         }
     }
 
-    async fn stop_session(&mut self, session_id: &str) -> Option<Message> {
+    async fn stop_session(&mut self, session_id: &str){
         if let Err(e) = self.connection_manager.stop(session_id).await {
-            return Some(Message::show_error("Failed to stop session", e));
+            error!("Failed to stop session: {:?}", e);
+            self.message_tx.send(Message::show_error("Failed to stop session", e)).await
+                .expect("Failed to send stop session error message");
         }
-        None
     }
 
     async fn show_scope(&mut self, parent: Option<Scope>) {
