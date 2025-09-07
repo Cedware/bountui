@@ -12,6 +12,8 @@ use crate::boundary::{ApiClient, Error, Scope, Session};
 use serde::Deserialize;
 use std::net::TcpListener;
 use std::process::{Output, Stdio};
+use log::debug;
+use serde::de::IgnoredAny;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Clone)]
@@ -34,11 +36,15 @@ impl<R> CliClient<R> {
         &self,
         json: &'a [u8],
     ) -> Result<T, serde_json::Error> {
+        let response_text = String::from_utf8_lossy(json);
+        debug!("Response: {}", response_text);
         let response = serde_json::from_slice(json)?;
         Ok(response)
     }
 
     fn parse_error_response(&self, json: &[u8]) -> Result<Error, serde_json::Error> {
+        let response_text = String::from_utf8_lossy(json);
+        debug!("Response: {}", response_text);
         let response: ErrorResponse = serde_json::from_slice(json)?;
         Ok(Error::ApiError(
             response.status_code,
@@ -194,8 +200,8 @@ where
         let mut command = tokio::process::Command::new(&self.bin_path);
         let configured_command = command.args(&args);
         let output = self.command_runner.output(configured_command).await?;
-        let result = self.get_result_from_output(&output);
-        result
+        let _: IgnoredAny = self.get_result_from_output(&output)?;
+        Ok(())
     }
 
     async fn authenticate(&self) -> Result<AuthenticateResponse, Error> {
@@ -318,5 +324,70 @@ mod test {
             response, expected_response,
             "The response should equal the expected response"
         );
+    }
+
+    #[tokio::test]
+    async fn test_cancel_session_success() {
+        let mut command_runner = MockCommandRunner::new();
+
+        // JSON returned by boundary sessions cancel -format json
+        let response_json = r#"{
+   "status_code":200,
+   "item":{
+      "id":"id",
+      "target_id":"target_id",
+      "scope":{
+         "id":"scope_id",
+         "type":"project",
+         "name":"scope name",
+         "description":"scope_description",
+         "parent_scope_id":"parent_scope_id"
+      },
+      "created_time":"2025-09-07T06:24:03.179388Z",
+      "updated_time":"2025-09-07T06:24:26.346325Z",
+      "version":2,
+      "type":"tcp",
+      "expiration_time":"2025-09-07T14:24:03.184663Z",
+      "auth_token_id":"at_id",
+      "user_id":"u_id",
+      "host_set_id":"hsst_id",
+      "host_id":"hst_id",
+      "scope_id":"p_id",
+      "endpoint":"tcp://endpoint:443",
+      "states":[
+         {
+            "status":"canceling",
+            "start_time":"2025-09-07T06:24:26.346325Z"
+         },
+         {
+            "status":"pending",
+            "start_time":"2025-09-07T06:24:03.179388Z",
+            "end_time":"2025-09-07T06:24:26.346325Z"
+         }
+      ],
+      "status":"canceling",
+      "certificate":"certificate_content",
+      "authorized_actions":[
+         "cancel:self",
+         "read:self"
+      ]
+   }
+}"#;
+
+        command_runner
+            .expect_output()
+            .times(1)
+            .with(predicate::always())
+            .returning(move |_| {
+                Box::pin(create_output_result(0, response_json.to_string(), String::new()))
+            });
+
+        let client = CliClient {
+            bin_path: "boundary".to_string(),
+            command_runner,
+        };
+
+        let result = client.cancel_session("id").await;
+        assert_ok!(&result, "cancel_session should return Ok when JSON is valid");
     }
 }
