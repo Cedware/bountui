@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConnectionError {
-    #[error("Boundary error: {0}")]
+    #[error("Boundary error: {0:?}")]
     BoundaryError(#[from] boundary::Error),
     #[error("Failed to stop the connection: The session id '{0}' is unknown")]
     StopFailedUnknownSessionId(String),

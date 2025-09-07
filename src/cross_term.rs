@@ -7,13 +7,18 @@ pub fn receive_cross_term_events() -> tokio::sync::mpsc::Receiver<Event> {
         loop {
             if let Ok(event) = crossterm::event::read() {
 
-                    if let Event::Key(key_event) = event {
-                        if key_event.kind == KeyEventKind::Press {
-                            if let Err(_) = sender.send(event).await {
-                                break;
-                            }
+                if let Event::Key(key_event) = event {
+                    if key_event.kind == KeyEventKind::Press {
+                        if let Err(_) = sender.send(event).await {
+                            break;
                         }
                     }
+                }
+                else {
+                    if let Err(_) = sender.send(event).await {
+                        break;
+                    }
+                }
 
             }
             else { 
