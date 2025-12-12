@@ -121,13 +121,16 @@ impl ConnectionResultDialog {
             let username = selected_item.credential.username.clone();
             let _ = self
                 .message_tx
-                .send(Message::SetClipboard(username))
-                .await;
-            let _ = self
-                .message_tx
-                .send(Message::ShowToast {
-                    text: "Username copied".to_string(),
-                    duration: std::time::Duration::from_secs(3),
+                .send(Message::SetClipboard {
+                    text: username,
+                    on_success: Some(Box::new(Message::ShowToast {
+                        text: "Username copied".to_string(),
+                        duration: std::time::Duration::from_secs(3),
+                    })),
+                    on_error: Some(Box::new(Message::ShowToast {
+                        text: "Failed to copy username".to_string(),
+                        duration: std::time::Duration::from_secs(3),
+                    })),
                 })
                 .await;
         }
@@ -139,13 +142,16 @@ impl ConnectionResultDialog {
             let password = selected_item.credential.password.clone();
             let _ = self
                 .message_tx
-                .send(Message::SetClipboard(password))
-                .await;
-            let _ = self
-                .message_tx
-                .send(Message::ShowToast {
-                    text: "Password copied".to_string(),
-                    duration: std::time::Duration::from_secs(3),
+                .send(Message::SetClipboard {
+                    text: password,
+                    on_success: Some(Box::new(Message::ShowToast {
+                        text: "Password copied".to_string(),
+                        duration: std::time::Duration::from_secs(3),
+                    })),
+                    on_error: Some(Box::new(Message::ShowToast {
+                        text: "Failed to copy password".to_string(),
+                        duration: std::time::Duration::from_secs(3),
+                    })),
                 })
                 .await;
         }
@@ -188,8 +194,12 @@ mod tests {
         let dialog = ConnectionResultDialog::new(sample_response("user1", "pass1"), tx);
         dialog.copy_selected_username_to_clipboard().await;
         match rx.recv().await {
-            Some(Message::SetClipboard(text)) => assert_eq!(text, "user1"),
-            _ => panic!("Expected SetClipboard('user1') message"),
+            Some(Message::SetClipboard { text, on_success, on_error }) => {
+                assert_eq!(text, "user1");
+                assert!(on_success.is_some());
+                assert!(on_error.is_some());
+            }
+            _ => panic!("Expected SetClipboard message"),
         }
     }
 
@@ -199,8 +209,12 @@ mod tests {
         let dialog = ConnectionResultDialog::new(sample_response("user2", "pass2"), tx);
         dialog.copy_selected_password_to_clipboard().await;
         match rx.recv().await {
-            Some(Message::SetClipboard(text)) => assert_eq!(text, "pass2"),
-            _ => panic!("Expected SetClipboard('pass2') message"),
+            Some(Message::SetClipboard { text, on_success, on_error }) => {
+                assert_eq!(text, "pass2");
+                assert!(on_success.is_some());
+                assert!(on_error.is_some());
+            }
+            _ => panic!("Expected SetClipboard message"),
         }
     }
 }

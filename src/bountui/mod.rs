@@ -50,7 +50,11 @@ pub enum Message {
     },
     GoBack,
     ShowAlert(String, String),
-    SetClipboard(String),
+    SetClipboard {
+        text: String,
+        on_success: Option<Box<Message>>,
+        on_error: Option<Box<Message>>,
+    },
     Targets(TargetsPageMessage),
     Scopes(ScopesPageMessage),
     SessionsPage(SessionsPageMessage),
@@ -403,12 +407,23 @@ where
                     scopes_page.handle_message(scopes_message).await;
                 }
             }
-            Message::SetClipboard(text) => {
-                if let Err(e) = self.clipboard.set_text(text) {
-                    self.alert = Some((
-                        "Clipboard Error".to_string(),
-                        format!("Failed to set clipboard text: {e}"),
-                    ));
+            Message::SetClipboard { text, on_success, on_error } => {
+                match self.clipboard.set_text(text) {
+                    Ok(_) => {
+                        if let Some(success_msg) = on_success {
+                            let _ = self.message_tx.send(*success_msg).await;
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(error_msg) = on_error {
+                            let _ = self.message_tx.send(*error_msg).await;
+                        } else {
+                            self.alert = Some((
+                                "Clipboard Error".to_string(),
+                                format!("Failed to set clipboard text: {e}"),
+                            ));
+                        }
+                    }
                 }
             }
             Message::ShowToast { text, duration } => {
@@ -495,7 +510,11 @@ mod tests {
             Box::new(mock_clip),
         ).await;
 
-        app.handle_message(Message::SetClipboard("hello".to_string())).await;
+        app.handle_message(Message::SetClipboard {
+            text: "hello".to_string(),
+            on_success: None,
+            on_error: None,
+        }).await;
 
         assert!(app.alert.is_none(), "Alert should not be set on clipboard success");
     }
@@ -522,7 +541,11 @@ mod tests {
             Box::new(mock_clip),
         ).await;
 
-        app.handle_message(Message::SetClipboard("oops".to_string())).await;
+        app.handle_message(Message::SetClipboard {
+            text: "oops".to_string(),
+            on_success: None,
+            on_error: None,
+        }).await;
 
         match &app.alert {
             Some((title, _msg)) => {
