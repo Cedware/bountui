@@ -7,7 +7,7 @@ use crate::bountui::components::table::sessions::{
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::ConnectionManager;
-use crate::bountui::widgets::Alert;
+use crate::bountui::widgets::{Alert, Toast};
 use crate::event_ext::EventExt;
 use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
@@ -15,12 +15,14 @@ use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::error;
-use ratatui::layout::Constraint;
+use ratatui::layout::{Constraint, Rect};
 use ratatui::Frame;
 pub use remember_user_input::*;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem;
 use tokio::select;
+use tokio::sync::Semaphore;
 
 pub mod components;
 pub mod connection_manager;
@@ -56,6 +58,13 @@ pub enum Message {
     NavigateToScopeTree,
     NavigateToMySessions,
     RunFuture(BoxFuture<'static, ()>),
+    ShowToast {
+        text: String,
+        duration: std::time::Duration,
+    },
+    HideToast {
+        id: String,
+    },
 }
 
 impl Message {
@@ -92,6 +101,7 @@ pub struct BountuiApp<
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
+    toasts: HashMap<String, String>,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -109,7 +119,7 @@ where
         clipboard: Box<dyn ClipboardAccess>,
     ) -> Self
     {
-        let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
+        let (message_tx, message_rx) = tokio::sync::mpsc::channel(Semaphore::MAX_PERMITS);
         let page =
             Page::Scopes(ScopesPage::new(None, message_tx.clone(), boundary_client.clone()).await);
 
@@ -127,6 +137,7 @@ where
             tasks: FuturesUnordered::new(),
             remember_user_input,
             clipboard,
+            toasts: HashMap::new(),
         }
     }
 
@@ -265,6 +276,32 @@ where
                 sessions_page.view(frame, content_area);
             }
         }
+
+        // Render toasts overlaying the content at the bottom
+        if !self.toasts.is_empty() {
+            let toast_height = self.toasts.len() as u16 * 3;
+            let frame_area = frame.area();
+
+            // Position toasts at the bottom of the frame
+            let toast_area = Rect {
+                x: frame_area.x,
+                y: frame_area.y + frame_area.height.saturating_sub(toast_height),
+                width: frame_area.width,
+                height: toast_height.min(frame_area.height),
+            };
+
+            let toast_constraints: Vec<Constraint> = self.toasts
+                .iter()
+                .map(|_| Constraint::Length(3))
+                .collect();
+            let toast_areas = ratatui::layout::Layout::vertical(toast_constraints).split(toast_area);
+
+            for (i, (_id, text)) in self.toasts.iter().enumerate() {
+                if i < toast_areas.len() {
+                    frame.render_widget(Toast::new(text.clone()), toast_areas[i]);
+                }
+            }
+        }
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
@@ -373,6 +410,20 @@ where
                         format!("Failed to set clipboard text: {e}"),
                     ));
                 }
+            }
+            Message::ShowToast { text, duration } => {
+                let id = uuid::Uuid::new_v4().to_string();
+                self.toasts.insert(id.clone(), text);
+
+                let message_tx = self.message_tx.clone();
+                let future = Box::pin(async move {
+                    tokio::time::sleep(duration).await;
+                    let _ = message_tx.send(Message::HideToast { id }).await;
+                });
+                self.tasks.push(future);
+            }
+            Message::HideToast { id } => {
+                self.toasts.remove(&id);
             }
         }
     }

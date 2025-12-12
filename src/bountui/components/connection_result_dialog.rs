@@ -123,6 +123,13 @@ impl ConnectionResultDialog {
                 .message_tx
                 .send(Message::SetClipboard(username))
                 .await;
+            let _ = self
+                .message_tx
+                .send(Message::ShowToast {
+                    text: "Username copied".to_string(),
+                    duration: std::time::Duration::from_secs(3),
+                })
+                .await;
         }
     }
 
@@ -133,6 +140,13 @@ impl ConnectionResultDialog {
             let _ = self
                 .message_tx
                 .send(Message::SetClipboard(password))
+                .await;
+            let _ = self
+                .message_tx
+                .send(Message::ShowToast {
+                    text: "Password copied".to_string(),
+                    duration: std::time::Duration::from_secs(3),
+                })
                 .await;
         }
     }
