@@ -7,7 +7,6 @@ use crate::bountui::components::table::sessions::{
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::ConnectionManager;
-use crate::bountui::widgets::{Alert, Toast};
 use crate::event_ext::EventExt;
 use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
@@ -18,7 +17,6 @@ use log::error;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::Frame;
 pub use remember_user_input::*;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem;
 use tokio::select;
@@ -28,6 +26,12 @@ pub mod components;
 pub mod connection_manager;
 mod remember_user_input;
 mod widgets;
+
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub id: String,
+    pub text: String,
+}
 
 pub enum Message {
     ShowScopes {
@@ -105,7 +109,7 @@ pub struct BountuiApp<
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
-    toasts: HashMap<String, String>,
+    toasts: Vec<Toast>,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -141,7 +145,7 @@ where
             tasks: FuturesUnordered::new(),
             remember_user_input,
             clipboard,
-            toasts: HashMap::new(),
+            toasts: Vec::new(),
         }
     }
 
@@ -247,7 +251,7 @@ where
     pub fn view(&self, frame: &mut Frame) {
         if let Some((title, message)) = &self.alert {
             frame.render_widget(
-                Alert::new(title.to_string(), message.to_string()),
+                widgets::Alert::new(title.to_string(), message.to_string()),
                 frame.area(),
             );
         }
@@ -300,9 +304,9 @@ where
                 .collect();
             let toast_areas = ratatui::layout::Layout::vertical(toast_constraints).split(toast_area);
 
-            for (i, (_id, text)) in self.toasts.iter().enumerate() {
+            for (i, toast) in self.toasts.iter().enumerate() {
                 if i < toast_areas.len() {
-                    frame.render_widget(Toast::new(text.clone()), toast_areas[i]);
+                    frame.render_widget(widgets::Toast::new(toast.text.clone()), toast_areas[i]);
                 }
             }
         }
@@ -428,7 +432,10 @@ where
             }
             Message::ShowToast { text, duration } => {
                 let id = uuid::Uuid::new_v4().to_string();
-                self.toasts.insert(id.clone(), text);
+                self.toasts.push(Toast {
+                    id: id.clone(),
+                    text,
+                });
 
                 let message_tx = self.message_tx.clone();
                 let future = Box::pin(async move {
@@ -438,7 +445,7 @@ where
                 self.tasks.push(future);
             }
             Message::HideToast { id } => {
-                self.toasts.remove(&id);
+                self.toasts.retain(|toast| toast.id != id);
             }
         }
     }
