@@ -123,14 +123,18 @@ impl ConnectionResultDialog {
                 .message_tx
                 .send(Message::SetClipboard {
                     text: username,
-                    on_success: Some(Box::new(Message::ShowToast {
-                        text: "Username copied".to_string(),
-                        duration: std::time::Duration::from_secs(3),
-                    })),
-                    on_error: Some(Box::new(Message::ShowToast {
-                        text: "Failed to copy username".to_string(),
-                        duration: std::time::Duration::from_secs(3),
-                    })),
+                    on_success: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Username copied".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
+                    on_error: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Failed to copy username".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
                 })
                 .await;
         }
@@ -144,14 +148,18 @@ impl ConnectionResultDialog {
                 .message_tx
                 .send(Message::SetClipboard {
                     text: password,
-                    on_success: Some(Box::new(Message::ShowToast {
-                        text: "Password copied".to_string(),
-                        duration: std::time::Duration::from_secs(3),
-                    })),
-                    on_error: Some(Box::new(Message::ShowToast {
-                        text: "Failed to copy password".to_string(),
-                        duration: std::time::Duration::from_secs(3),
-                    })),
+                    on_success: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Password copied".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
+                    on_error: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Failed to copy password".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
                 })
                 .await;
         }
