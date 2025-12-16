@@ -180,6 +180,7 @@ dependencies = [
  "tokio-test",
  "tokio-util",
  "tui-input",
+ "unicode-width 0.2.0",
  "uuid",
 ]
 
