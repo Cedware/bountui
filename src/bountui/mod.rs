@@ -115,7 +115,7 @@ where
         clipboard: Box<dyn ClipboardAccess>,
     ) -> Self
     {
-        let (message_tx, message_rx) = tokio::sync::mpsc::channel(Semaphore::MAX_PERMITS);
+        let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
         let page =
             Page::Scopes(ScopesPage::new(None, message_tx.clone(), boundary_client.clone()).await);
 
