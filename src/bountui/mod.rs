@@ -97,7 +97,7 @@ pub struct BountuiApp<
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
-    toaster: components::toaster::Toaster,
+    toaster: std::cell::RefCell<components::toaster::Toaster>,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -133,7 +133,7 @@ where
             tasks: FuturesUnordered::new(),
             remember_user_input,
             clipboard,
-            toaster: components::toaster::Toaster::new(message_tx),
+            toaster: std::cell::RefCell::new(components::toaster::Toaster::new(message_tx)),
         }
     }
 
@@ -274,7 +274,7 @@ where
         }
 
         // Render toasts overlaying the content at the bottom
-        self.toaster.view(frame);
+        self.toaster.borrow_mut().view(frame);
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
@@ -396,7 +396,7 @@ where
                 }
             }
             Message::Toaster(toaster_message) => {
-                self.toaster.handle_message(toaster_message).await;
+                self.toaster.borrow_mut().handle_message(toaster_message).await;
             }
         }
     }
