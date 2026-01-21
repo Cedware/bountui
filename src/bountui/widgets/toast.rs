@@ -4,6 +4,9 @@ use ratatui::prelude::{Line, Span, Stylize, Widget};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+const TOAST_BORDER_WIDTH: u16 = 1;
+const TOAST_PADDING: u16 = 5;
+
 pub struct Toast {
     text: String,
 }
@@ -19,8 +22,7 @@ impl Widget for Toast {
     where
         Self: Sized
     {
-        // Calculate width: text length + 10 (5 spaces left and right) + 2 (for borders)
-        let toast_width = (UnicodeWidthStr::width(self.text.as_str()) as u16 + 10 + 2).min(area.width);
+        let toast_width = (UnicodeWidthStr::width(self.text.as_str()) as u16 + TOAST_BORDER_WIDTH * 2 + TOAST_PADDING * 2).min(area.width);
 
         // Center the toast horizontally
         let horizontal = ratatui::layout::Layout::horizontal([ratatui::layout::Constraint::Length(toast_width)])
