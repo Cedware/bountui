@@ -20,7 +20,6 @@ pub use remember_user_input::*;
 use std::fmt::Display;
 use std::mem;
 use tokio::select;
-use tokio::sync::Semaphore;
 
 pub mod components;
 pub mod connection_manager;
@@ -97,7 +96,7 @@ pub struct BountuiApp<
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
-    toaster: std::cell::RefCell<components::toaster::Toaster>,
+    toaster: components::toaster::Toaster,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -133,7 +132,7 @@ where
             tasks: FuturesUnordered::new(),
             remember_user_input,
             clipboard,
-            toaster: std::cell::RefCell::new(components::toaster::Toaster::new(message_tx)),
+            toaster: components::toaster::Toaster::new(message_tx),
         }
     }
 
@@ -236,6 +235,17 @@ where
         }
     }
 
+    fn handle_layout(&mut self, terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>) {
+        let terminal_size = terminal.size().unwrap();
+        let frame_area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: terminal_size.width,
+            height: terminal_size.height,
+        };
+        self.toaster.layout(frame_area);
+    }
+
     pub fn view(&self, frame: &mut Frame) {
         if let Some((title, message)) = &self.alert {
             frame.render_widget(
@@ -274,7 +284,7 @@ where
         }
 
         // Render toasts overlaying the content at the bottom
-        self.toaster.borrow_mut().view(frame);
+        self.toaster.view(frame);
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
@@ -396,7 +406,7 @@ where
                 }
             }
             Message::Toaster(toaster_message) => {
-                self.toaster.borrow_mut().handle_message(toaster_message).await;
+                self.toaster.handle_message(toaster_message).await;
             }
         }
     }
@@ -405,6 +415,8 @@ where
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
 
+        // Perform initial layout
+        self.handle_layout(&mut terminal);
 
         loop {
             terminal
@@ -425,7 +437,13 @@ where
                                 .map_err(|e| error!("Failed to shutdown connection manager: {:?}", e));
                             break;
                         }
-                        self.handle_event(&event).await;
+                        if event.is_resize() {
+                            self.handle_layout(&mut terminal);
+                        }
+                        else {
+                            self.handle_event(&event).await;
+                        }
+
                     }
                 },
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {}

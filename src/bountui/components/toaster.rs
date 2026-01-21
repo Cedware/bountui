@@ -105,9 +105,7 @@ impl Toaster {
         });
     }
 
-    pub fn view(&mut self, frame: &mut Frame) {
-        let frame_area = frame.area();
-
+    pub fn layout(&mut self, frame_area: Rect) {
         // Calculate max toasts that fit in bottom third of terminal
         // Each toast takes 3 lines of height
         let bottom_third_height = frame_area.height / 3;
@@ -123,10 +121,14 @@ impl Toaster {
         if max_toasts > old_max {
             self.promote_pending_toasts();
         }
+    }
+
+    pub fn view(&self, frame: &mut Frame) {
+        let frame_area = frame.area();
 
         // Render active toasts only
         if !self.active_toasts.is_empty() {
-            let toast_count = self.active_toasts.len().min(max_toasts);
+            let toast_count = self.active_toasts.len().min(self.max_visible_toasts);
             let toast_height = toast_count as u16 * 3;
 
             // Position toasts at the bottom of the frame

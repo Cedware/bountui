@@ -34,8 +34,7 @@ impl Widget for Toast {
             .light_blue()
             .on_black()
             .title_alignment(Alignment::Center);
-
-        let inner_area = block.inner(toast_area);
+        
         let paragraph = Paragraph::new(Line::from(Span::from(self.text)))
             .alignment(Alignment::Center)
             .block(block);
