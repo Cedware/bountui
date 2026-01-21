@@ -7,7 +7,6 @@ use crate::bountui::components::table::sessions::{
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::ConnectionManager;
-use crate::bountui::widgets::Alert;
 use crate::event_ext::EventExt;
 use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
@@ -48,7 +47,11 @@ pub enum Message {
     },
     GoBack,
     ShowAlert(String, String),
-    SetClipboard(String),
+    SetClipboard {
+        text: String,
+        on_success: Option<Box<Message>>,
+        on_error: Option<Box<Message>>,
+    },
     Targets(TargetsPageMessage),
     Scopes(ScopesPageMessage),
     SessionsPage(SessionsPageMessage),
@@ -56,6 +59,7 @@ pub enum Message {
     NavigateToScopeTree,
     NavigateToMySessions,
     RunFuture(BoxFuture<'static, ()>),
+    Toaster(components::toaster::Message),
 }
 
 impl Message {
@@ -92,6 +96,7 @@ pub struct BountuiApp<
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
+    toaster: components::toaster::Toaster,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -109,7 +114,7 @@ where
         clipboard: Box<dyn ClipboardAccess>,
     ) -> Self
     {
-        let (message_tx, message_rx) = tokio::sync::mpsc::channel(1);
+        let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
         let page =
             Page::Scopes(ScopesPage::new(None, message_tx.clone(), boundary_client.clone()).await);
 
@@ -120,13 +125,14 @@ where
             history: vec![],
             connection_manager,
             alert: None,
-            message_tx,
+            message_tx: message_tx.clone(),
             message_rx,
             cross_term_event_rx,
             navigation_input: None,
             tasks: FuturesUnordered::new(),
             remember_user_input,
             clipboard,
+            toaster: components::toaster::Toaster::new(message_tx),
         }
     }
 
@@ -229,10 +235,21 @@ where
         }
     }
 
+    fn handle_layout(&mut self, terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>) {
+        let terminal_size = terminal.size().unwrap();
+        let frame_area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: terminal_size.width,
+            height: terminal_size.height,
+        };
+        self.toaster.layout(frame_area);
+    }
+
     pub fn view(&self, frame: &mut Frame) {
         if let Some((title, message)) = &self.alert {
             frame.render_widget(
-                Alert::new(title.to_string(), message.to_string()),
+                widgets::Alert::new(title.to_string(), message.to_string()),
                 frame.area(),
             );
         }
@@ -265,6 +282,9 @@ where
                 sessions_page.view(frame, content_area);
             }
         }
+
+        // Render toasts overlaying the content at the bottom
+        self.toaster.view(frame);
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
@@ -366,13 +386,27 @@ where
                     scopes_page.handle_message(scopes_message).await;
                 }
             }
-            Message::SetClipboard(text) => {
-                if let Err(e) = self.clipboard.set_text(text) {
-                    self.alert = Some((
-                        "Clipboard Error".to_string(),
-                        format!("Failed to set clipboard text: {e}"),
-                    ));
+            Message::SetClipboard { text, on_success, on_error } => {
+                match self.clipboard.set_text(text) {
+                    Ok(_) => {
+                        if let Some(success_msg) = on_success {
+                            let _ = self.message_tx.send(*success_msg).await;
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(error_msg) = on_error {
+                            let _ = self.message_tx.send(*error_msg).await;
+                        } else {
+                            self.alert = Some((
+                                "Clipboard Error".to_string(),
+                                format!("Failed to set clipboard text: {e}"),
+                            ));
+                        }
+                    }
                 }
+            }
+            Message::Toaster(toaster_message) => {
+                self.toaster.handle_message(toaster_message).await;
             }
         }
     }
@@ -381,6 +415,8 @@ where
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
 
+        // Perform initial layout
+        self.handle_layout(&mut terminal);
 
         loop {
             terminal
@@ -401,7 +437,13 @@ where
                                 .map_err(|e| error!("Failed to shutdown connection manager: {:?}", e));
                             break;
                         }
-                        self.handle_event(&event).await;
+                        if event.is_resize() {
+                            self.handle_layout(&mut terminal);
+                        }
+                        else {
+                            self.handle_event(&event).await;
+                        }
+
                     }
                 },
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {}
@@ -444,7 +486,11 @@ mod tests {
             Box::new(mock_clip),
         ).await;
 
-        app.handle_message(Message::SetClipboard("hello".to_string())).await;
+        app.handle_message(Message::SetClipboard {
+            text: "hello".to_string(),
+            on_success: None,
+            on_error: None,
+        }).await;
 
         assert!(app.alert.is_none(), "Alert should not be set on clipboard success");
     }
@@ -471,7 +517,11 @@ mod tests {
             Box::new(mock_clip),
         ).await;
 
-        app.handle_message(Message::SetClipboard("oops".to_string())).await;
+        app.handle_message(Message::SetClipboard {
+            text: "oops".to_string(),
+            on_success: None,
+            on_error: None,
+        }).await;
 
         match &app.alert {
             Some((title, _msg)) => {

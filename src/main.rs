@@ -70,7 +70,14 @@ async fn main() {
     }
     let boundary_client = boundary::CliClient::default();
     let connection_manager = bountui::connection_manager::DefaultConnectionManager::new(boundary_client.clone());
-    let auth_result = boundary_client.authenticate().await.unwrap();
+    let auth_result = match boundary_client.authenticate().await {
+        Ok(res) => res,
+        Err(e) => {
+            error!("Authentication failed: {}", e);
+            eprintln!("Error: Authentication failed. Check logs for details.\nReason: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     //This is safe because this is the only place we set the environment variable
     unsafe { env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token) };

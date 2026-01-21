@@ -171,7 +171,7 @@ impl<FieldId, ButtonId> InputDialog<FieldId, ButtonId> where FieldId: Clone + Eq
 
 
 
-    fn inputs(&self, max_title_len: usize) -> Paragraph {
+    fn inputs(&'_ self, max_title_len: usize) -> Paragraph<'_> {
         let input_lines: Vec<Line> = self
             .fields
             .iter()
@@ -186,7 +186,7 @@ impl<FieldId, ButtonId> InputDialog<FieldId, ButtonId> where FieldId: Clone + Eq
         Paragraph::new(input_lines).alignment(Alignment::Left)
     }
 
-    fn buttons(&self) -> Paragraph {
+    fn buttons(&'_ self) -> Paragraph<'_> {
         let buttons: Vec<Span> = self
             .buttons
             .iter()

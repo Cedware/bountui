@@ -162,7 +162,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         table_state.select(Some(new_selected));
     }
 
-    fn instructions(&self) -> Title
+    fn instructions(&'_ self) -> Title<'_>
     {
         let spans: Vec<Span> = self
             .actions
@@ -180,7 +180,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         Title::from(Line::from(spans))
     }
 
-    fn rows(&self) -> Vec<Row> {
+    fn rows(&'_ self) -> Vec<Row<'_>> {
         self
             .visible_items
             .iter()
@@ -193,7 +193,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             .collect()
     }
 
-    fn table(&self) -> Table
+    fn table(&'_ self) -> Table<'_>
     {
         let title = Title::from(self.title.clone().bold());
 
@@ -229,15 +229,24 @@ impl<T> TablePage<T> where Self: SortItems<T> {
     pub async fn handle_event(&mut self, event: &Event) -> bool where TablePage<T>: FilterItems<T> {
         if self.filter.is_input() {
             match event {
-                Event::Key(key_event) if key_event.code == KeyCode::Enter => {
-                    self.hide_filter();
-                    true
+                Event::Key(key_event) => {
+                    match key_event.code {
+                        KeyCode::Enter =>  {
+                            self.hide_filter();
+                            true
+                        },
+                        KeyCode::Esc => {
+                            self.reset_filter();
+                            true
+                        },
+                        _ => {
+                            self.update_filter(event);
+                            true
+                        }
+                    }
                 },
                 _ => {
-                    // tui-input's handle_event doesn't indicate if it *actually* handled the event,
-                    // but for our purposes, if the filter input is active, we assume it did.
-                    self.update_filter(event);
-                    true
+                    false
                 }
             };
             return true
@@ -315,5 +324,78 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         }
 
     }
+
+}
+
+#[cfg(test)]
+mod test {
+    use std::rc::Rc;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::prelude::Constraint;
+    use tokio::sync::mpsc;
+    use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
+    use crate::bountui::components::TablePage;
+    use crate::bountui::Message;
+
+    struct TestItem {
+        col_a: String,
+        col_b: i32
+    }
+
+    impl SortItems<TestItem> for TablePage<TestItem>{
+        fn sort(items: &mut Vec<Rc<TestItem>>) {
+        }
+    }
+
+    impl FilterItems<TestItem> for TablePage<TestItem> {
+        fn matches(item: &TestItem, search: &str) -> bool {
+            Self::match_str(&item.col_a, search)
+        }
+    }
+
+    fn create_table_page(message_tx: mpsc::Sender<Message>) ->TablePage<TestItem> {
+
+        let cols: Vec<TableColumn<TestItem>> = vec![
+            TableColumn::new("Col A".to_string(), Constraint::Ratio(1, 2), Box::new(|i| i.col_a.to_string())),
+            TableColumn::new("Col B".to_string(), Constraint::Ratio(1, 2), Box::new(|i| i.col_b.to_string()))
+        ];
+
+        let items = vec![
+            TestItem {
+                col_a: "one".to_string(),
+                col_b: 2
+            },
+            TestItem {
+                col_a: "two".to_string(),
+                col_b: 2
+            }
+        ];
+
+        TablePage::new(
+            "Test Page".to_string(),
+            cols,
+            items,
+            vec![],
+            message_tx,
+            false
+        )
+    }
+
+
+    #[tokio::test]
+    async fn test_cancel_filter() {
+        let (message_tx, _message_rx) = mpsc::channel(1);
+        let mut sut = create_table_page(message_tx);
+        sut.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE))).await;
+        assert_eq!(sut.filter.is_active(), true);
+        sut.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE))).await;
+        sut.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))).await;
+        sut.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))).await;
+        assert_eq!(sut.visible_items.len(), 1);
+        sut.handle_event(&Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))).await;
+        assert_eq!(sut.visible_items.len(), 2);
+        assert_eq!(sut.filter.is_active(), false);
+    }
+
 
 }
