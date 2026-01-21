@@ -162,7 +162,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         table_state.select(Some(new_selected));
     }
 
-    fn instructions(&self) -> Title
+    fn instructions(&'_ self) -> Title<'_>
     {
         let spans: Vec<Span> = self
             .actions
@@ -180,7 +180,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         Title::from(Line::from(spans))
     }
 
-    fn rows(&self) -> Vec<Row> {
+    fn rows(&'_ self) -> Vec<Row<'_>> {
         self
             .visible_items
             .iter()
@@ -193,7 +193,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             .collect()
     }
 
-    fn table(&self) -> Table
+    fn table(&'_ self) -> Table<'_>
     {
         let title = Title::from(self.title.clone().bold());
 

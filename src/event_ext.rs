@@ -1,10 +1,11 @@
 use crossterm::event::Event;
 
 pub trait EventExt {
-    
+
     fn is_enter(&self) -> bool;
     fn is_stop(&self) -> bool;
-    
+    fn is_resize(&self) -> bool;
+
 }
 
 impl EventExt for Event {
@@ -21,5 +22,9 @@ impl EventExt for Event {
             Event::Key(key_event) => key_event.code == crossterm::event::KeyCode::Char('c') && key_event.modifiers == crossterm::event::KeyModifiers::CONTROL,
             _ => false
         }
+    }
+
+    fn is_resize(&self) -> bool {
+        matches!(self, Event::Resize(_, _))
     }
 }
