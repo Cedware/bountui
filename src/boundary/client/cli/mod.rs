@@ -14,12 +14,29 @@ use std::net::TcpListener;
 use std::process::{Output, Stdio};
 use log::debug;
 use serde::de::IgnoredAny;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::OnceCell;
+use semver::Version;
+
+/// Parse the Boundary CLI version from the `boundary version` command output.
+/// Extracts the version string from "Version Number: X.Y.Z" format.
+fn parse_boundary_version(output: &str) -> Result<Version, String> {
+    for line in output.lines() {
+        if let Some(version_str) = line.trim().strip_prefix("Version Number:") {
+            return Version::parse(version_str.trim()).map_err(|e| {
+                format!("invalid version '{}': {}", version_str.trim(), e)
+            });
+        }
+    }
+    Err("Version Number line not found in output".to_string())
+}
 
 #[derive(Clone)]
 pub struct CliClient<R> {
     bin_path: String,
     command_runner: R,
+    cached_version: Arc<OnceCell<Result<Version, String>>>,
 }
 
 impl Default for CliClient<DefaultCommandRunner> {
@@ -27,6 +44,7 @@ impl Default for CliClient<DefaultCommandRunner> {
         Self {
             bin_path: "boundary".to_string(),
             command_runner: DefaultCommandRunner,
+            cached_version: Arc::new(OnceCell::new()),
         }
     }
 }
@@ -68,6 +86,34 @@ impl<R> CliClient<R> {
                 String::from_utf8_lossy(&output.stderr).to_string(),
             )),
         }
+    }
+}
+
+impl<R> CliClient<R>
+where
+    R: CommandRunner + Send + Sync + 'static,
+{
+    async fn get_version(&self) -> Result<Version, Error> {
+        self.cached_version
+            .get_or_init(|| async {
+                let mut command = tokio::process::Command::new(&self.bin_path);
+                command.arg("version");
+                match self.command_runner.output(&mut command).await {
+                    Ok(output) if output.status.success() => {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        parse_boundary_version(&stdout).map_err(|e| e.to_string())
+                    }
+                    Ok(output) => Err(format!(
+                        "Boundary version command failed with status {:?}: {}",
+                        output.status.code(),
+                        String::from_utf8_lossy(&output.stderr)
+                    )),
+                    Err(e) => Err(format!("Failed to run boundary version: {}", e)),
+                }
+            })
+            .await
+            .clone()
+            .map_err(Error::VersionParseError)
     }
 }
 
@@ -164,17 +210,26 @@ where
         //Check if the port is available
         TcpListener::bind(format!("127.0.0.1:{port}"))?;
 
+        let port_str = port.to_string();
+        let mut args = vec![
+            "connect",
+            "-target-id",
+            target_id,
+            "-listen-port",
+            &port_str,
+            "-format",
+            "json",
+        ];
+
+        let version = self.get_version().await?;
+        if version >= Version::new(0, 21, 0) {
+            args.push("-inactive-timeout");
+            args.push("-1");
+        }
+
         let mut command = tokio::process::Command::new(&self.bin_path);
         let configured_command = command
-            .args([
-                "connect",
-                "-target-id",
-                target_id,
-                "-listen-port",
-                &port.to_string(),
-                "-format",
-                "json",
-            ])
+            .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = self.command_runner.spawn(configured_command)?;
@@ -225,6 +280,7 @@ mod test {
     use std::ops::Add;
     use std::os::unix::process::ExitStatusExt;
     use std::process::Output;
+    use std::sync::Arc;
     use tokio::io;
     use tokio_test::assert_ok;
 
@@ -269,6 +325,7 @@ mod test {
         let client = CliClient {
             bin_path: "boundary".to_string(),
             command_runner,
+            cached_version: Arc::new(tokio::sync::OnceCell::new()),
         };
 
         let scopes = client.get_scopes(None, false).await.unwrap();
@@ -285,6 +342,19 @@ mod test {
             expiration: Utc::now().add(TimeDelta::seconds(20)),
         };
         let response_json = serde_json::to_vec(&expected_response).unwrap();
+
+        // Mock the version command output (version < 0.21.0, no inactive-timeout support)
+        command_runner
+            .expect_output()
+            .times(1)
+            .with(predicate::always())
+            .returning(move |_| {
+                Box::pin(create_output_result(
+                    0,
+                    "Version Number: 0.20.0\n".to_string(),
+                    String::new(),
+                ))
+            });
 
         command_runner
             .expect_spawn()
@@ -306,6 +376,7 @@ mod test {
         let sut = CliClient {
             bin_path: "boundary".to_string(),
             command_runner,
+            cached_version: Arc::new(tokio::sync::OnceCell::new()),
         };
 
         let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -385,9 +456,115 @@ mod test {
         let client = CliClient {
             bin_path: "boundary".to_string(),
             command_runner,
+            cached_version: Arc::new(tokio::sync::OnceCell::new()),
         };
 
         let result = client.cancel_session("id").await;
         assert_ok!(&result, "cancel_session should return Ok when JSON is valid");
+    }
+
+    #[tokio::test]
+    async fn test_connect_with_inactive_timeout_support() {
+        let mut command_runner = MockCommandRunner::new();
+
+        let expected_response = ConnectResponse {
+            credentials: vec![],
+            session_id: "session_id".to_string(),
+            expiration: Utc::now().add(TimeDelta::seconds(20)),
+        };
+        let response_json = serde_json::to_vec(&expected_response).unwrap();
+
+        // Mock the version command output (version >= 0.21.0, supports inactive-timeout)
+        command_runner
+            .expect_output()
+            .times(1)
+            .with(predicate::always())
+            .returning(move |_| {
+                Box::pin(create_output_result(
+                    0,
+                    "Version Number: 0.21.0\n".to_string(),
+                    String::new(),
+                ))
+            });
+
+        command_runner
+            .expect_spawn()
+            .times(1)
+            .with(predicate::always())
+            .returning(move |_| {
+                let mut child = MockChild::new();
+                let response_json = response_json.clone();
+                child.expect_stdout().returning(move || {
+                    Some(
+                        tokio_test::io::Builder::new()
+                            .read(&response_json.clone())
+                            .build(),
+                    )
+                });
+                Ok(child)
+            });
+
+        let sut = CliClient {
+            bin_path: "boundary".to_string(),
+            command_runner,
+            cached_version: Arc::new(tokio::sync::OnceCell::new()),
+        };
+
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = tcp_listener.local_addr().unwrap().port();
+        drop(tcp_listener);
+
+        let result = sut.connect("target_id", port).await;
+        assert_ok!(&result, "connect should return Ok with version >= 0.21.0");
+        let (response, _) = result.unwrap();
+        assert_eq!(
+            response, expected_response,
+            "The response should equal the expected response"
+        );
+    }
+
+    mod parse_boundary_version_tests {
+        use super::super::parse_boundary_version;
+        use semver::Version;
+
+        #[test]
+        fn test_parse_valid_version() {
+            let output = r#"Version information:
+  Version Number: 0.21.0
+  Git Revision:   abc123
+"#;
+            let version = parse_boundary_version(output);
+            assert_eq!(version, Ok(Version::new(0, 21, 0)));
+        }
+
+        #[test]
+        fn test_parse_version_with_extra_whitespace() {
+            let output = "Version Number:   1.2.3  \n";
+            let version = parse_boundary_version(output);
+            assert_eq!(version, Ok(Version::new(1, 2, 3)));
+        }
+
+        #[test]
+        fn test_parse_missing_version_line() {
+            let output = "Some random output\nNo version here";
+            let version = parse_boundary_version(output);
+            assert!(version.is_err());
+            assert!(version.unwrap_err().contains("Version Number line not found"));
+        }
+
+        #[test]
+        fn test_parse_empty_output() {
+            let version = parse_boundary_version("");
+            assert!(version.is_err());
+            assert!(version.unwrap_err().contains("Version Number line not found"));
+        }
+
+        #[test]
+        fn test_parse_invalid_version_format() {
+            let output = "Version Number: not-a-valid-version\n";
+            let version = parse_boundary_version(output);
+            assert!(version.is_err());
+            assert!(version.unwrap_err().contains("invalid version"));
+        }
     }
 }
