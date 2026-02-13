@@ -10,4 +10,6 @@ pub enum Error {
     ApiError(u16, String),
     #[error("An error occurred while parsing JSON: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("Failed to parse Boundary version: {0}")]
+    VersionParseError(String),
 }
