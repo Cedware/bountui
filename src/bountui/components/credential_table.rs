@@ -1,0 +1,207 @@
+use crate::boundary;
+use crate::boundary::CredentialEntry;
+use crate::bountui::components::table::{Action, FilterItems, SortItems, TableColumn};
+use crate::bountui::components::TablePage;
+use crate::bountui::Message;
+use crossterm::event::{Event, KeyCode, KeyModifiers};
+use log::info;
+use ratatui::layout::{Constraint, Rect};
+use ratatui::Frame;
+use std::rc::Rc;
+use tokio::sync::mpsc;
+
+pub struct CredentialTable {
+    table: TablePage<boundary::CredentialEntry>,
+    message_tx: mpsc::Sender<Message>,
+}
+
+impl CredentialTable {
+    pub fn new(credentials: Vec<boundary::CredentialEntry>, message_tx: mpsc::Sender<Message>) -> Self {
+        let columns = vec![
+            TableColumn::new(
+                "Credential Source".to_string(),
+                Constraint::Ratio(2, 4),
+                Box::new(|e: &boundary::CredentialEntry| e.credential_source.name.clone()),
+            ),
+            TableColumn::new(
+                "Username".to_string(),
+                Constraint::Ratio(1, 4),
+                Box::new(|e: &boundary::CredentialEntry| e.credential.username.clone()),
+            ),
+            TableColumn::new(
+                "Password".to_string(),
+                Constraint::Ratio(1, 4),
+                Box::new(|e| e.credential.password.clone()),
+            ),
+        ];
+
+        let actions = vec![
+            Action::new(
+                "Close".to_string(),
+                "ESC".to_string(),
+                Box::new(|_: Option<&CredentialEntry>| true),
+            ),
+            Action::new(
+                "Copy Username".to_string(),
+                "u".to_string(),
+                Box::new(|item: Option<&CredentialEntry>| item.is_some()),
+            ),
+            Action::new(
+                "Copy Password".to_string(),
+                "p".to_string(),
+                Box::new(|item: Option<&CredentialEntry>| item.is_some()),
+            ),
+        ];
+
+        let table = TablePage::new(
+            "Credentials".to_string(),
+            columns,
+            credentials,
+            actions,
+            message_tx.clone(),
+            false,
+        );
+
+        Self { table, message_tx }
+    }
+
+    pub fn view(&self, frame: &mut Frame, area: Rect) {
+        self.table.view(frame, area);
+    }
+
+    pub async fn handle_event(&mut self, event: &Event) {
+        if let Event::Key(key_event) = event {
+            if key_event.modifiers == KeyModifiers::NONE {
+                match key_event.code {
+                    KeyCode::Char('u') => {
+                        self.copy_selected_username_to_clipboard().await;
+                    }
+                    KeyCode::Char('p') => {
+                        self.copy_selected_password_to_clipboard().await;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.table.handle_event(event).await;
+    }
+
+    pub async fn copy_selected_username_to_clipboard(&self) {
+        info!("Copying username to clipboard");
+        if let Some(selected_item) = self.table.selected_item() {
+            let username = selected_item.credential.username.clone();
+            let _ = self
+                .message_tx
+                .send(Message::SetClipboard {
+                    text: username,
+                    on_success: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Username copied".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
+                    on_error: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Failed to copy username".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
+                })
+                .await;
+        }
+    }
+
+    pub async fn copy_selected_password_to_clipboard(&self) {
+        info!("Copying password to clipboard");
+        if let Some(selected_item) = self.table.selected_item() {
+            let password = selected_item.credential.password.clone();
+            let _ = self
+                .message_tx
+                .send(Message::SetClipboard {
+                    text: password,
+                    on_success: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Password copied".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
+                    on_error: Some(Box::new(Message::Toaster(
+                        crate::bountui::components::toaster::Message::ShowToast {
+                            text: "Failed to copy password".to_string(),
+                            duration: std::time::Duration::from_secs(3),
+                        },
+                    ))),
+                })
+                .await;
+        }
+    }
+}
+
+impl SortItems<boundary::CredentialEntry> for TablePage<CredentialEntry> {
+    fn sort(items: &mut Vec<Rc<CredentialEntry>>) {
+        items.sort_by(|a, b| a.credential.username.cmp(&b.credential.username))
+    }
+}
+
+impl FilterItems<CredentialEntry> for TablePage<CredentialEntry> {
+    fn matches(item: &CredentialEntry, search: &str) -> bool {
+        Self::match_str(&item.credential.username, search)
+            || Self::match_str(&item.credential_source.name, search)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boundary::{Credential, CredentialEntry, CredentialSource};
+
+    fn sample_credentials(username: &str, password: &str) -> Vec<CredentialEntry> {
+        vec![CredentialEntry {
+            credential: Credential {
+                username: username.to_string(),
+                password: password.to_string(),
+            },
+            credential_source: CredentialSource {
+                name: "test-source".to_string(),
+            },
+        }]
+    }
+
+    #[tokio::test]
+    async fn copy_username_sends_set_clipboard_message() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let table = CredentialTable::new(sample_credentials("user1", "pass1"), tx);
+        table.copy_selected_username_to_clipboard().await;
+        match rx.recv().await {
+            Some(Message::SetClipboard {
+                text,
+                on_success,
+                on_error,
+            }) => {
+                assert_eq!(text, "user1");
+                assert!(on_success.is_some());
+                assert!(on_error.is_some());
+            }
+            _ => panic!("Expected SetClipboard message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_password_sends_set_clipboard_message() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let table = CredentialTable::new(sample_credentials("user2", "pass2"), tx);
+        table.copy_selected_password_to_clipboard().await;
+        match rx.recv().await {
+            Some(Message::SetClipboard {
+                text,
+                on_success,
+                on_error,
+            }) => {
+                assert_eq!(text, "pass2");
+                assert!(on_success.is_some());
+                assert!(on_error.is_some());
+            }
+            _ => panic!("Expected SetClipboard message"),
+        }
+    }
+}

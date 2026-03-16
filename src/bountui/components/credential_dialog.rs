@@ -12,11 +12,11 @@ use ratatui::{
 };
 use tokio::sync::mpsc;
 
-pub struct ConnectionEstablishedDialog {
+pub struct CredentialDialog {
     credential_table: CredentialTable,
 }
 
-impl ConnectionEstablishedDialog {
+impl CredentialDialog {
     pub fn new(
         credentials: Vec<boundary::CredentialEntry>,
         message_tx: mpsc::Sender<Message>,
@@ -36,7 +36,7 @@ impl ConnectionEstablishedDialog {
         frame.render_widget(Clear, area);
 
         let block = Block::default()
-            .title("Connection Established")
+            .title("Credentials")
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)

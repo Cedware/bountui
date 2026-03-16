@@ -21,6 +21,7 @@ pub enum ConnectionError {
 struct ConnectionEntry {
     cancellation_token: CancellationToken,
     join_handle: JoinHandle<()>,
+    credentials: Option<Vec<boundary::CredentialEntry>>,
 }
 
 #[cfg_attr(test, mockall::automock)]
@@ -28,6 +29,7 @@ pub trait ConnectionManager {
     fn connect(&self, target_id: &str, port: u16) -> impl Future<Output=Result<boundary::ConnectResponse, boundary::Error>>;
     fn shutdown(&self) -> impl Future<Output=Result<(), Vec<ConnectionError>>>;
     fn stop(&self, id: &str) -> impl Future<Output=Result<(), ConnectionError>>;
+    fn get_credentials(&self) -> HashMap<String, Vec<boundary::CredentialEntry>>;
 }
 
 pub struct DefaultConnectionManager<C> {
@@ -109,7 +111,12 @@ where
             self.boundary_client.connect(&target_id, port).await?;
         let cancellation_token = CancellationToken::new();
         let join_handle = Self::spawn_connection_task(self.connections.clone(), connection_handle, cancellation_token.clone(), response.expiration, response.session_id.clone());
-        self.connections.lock().unwrap().insert(response.session_id.clone(), ConnectionEntry { cancellation_token, join_handle });
+        let credentials = if response.credentials.is_empty() {
+            None
+        } else {
+            Some(response.credentials.clone())
+        };
+        self.connections.lock().unwrap().insert(response.session_id.clone(), ConnectionEntry { cancellation_token, join_handle, credentials });
         Ok(response)
     }
 
@@ -140,6 +147,15 @@ where
             .remove(id)
             .ok_or(ConnectionError::StopFailedUnknownSessionId(id.to_string()))?;
         self.stop_connection_entry(id, connection_entry).await
+    }
+
+    fn get_credentials(&self) -> HashMap<String, Vec<boundary::CredentialEntry>> {
+        self.connections.lock().unwrap()
+            .iter()
+            .filter_map(|(id, entry)| {
+                entry.credentials.as_ref().map(|creds| (id.clone(), creds.clone()))
+            })
+            .collect()
     }
 }
 

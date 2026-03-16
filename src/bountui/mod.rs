@@ -194,6 +194,7 @@ where
 
     async fn navigate_to_my_sessions(&mut self) {
         self.navigation_input = None;
+        let credentials = self.connection_manager.get_credentials();
         self.navigate_to(
             Page::UserSessions(
                 SessionsPage::new(
@@ -204,6 +205,7 @@ where
                         self.message_tx.clone(),
                     ),
                     self.message_tx.clone(),
+                    credentials,
                 )
                     .await,
             ),
@@ -330,6 +332,7 @@ where
             Message::ShowTargets { parent } => self.show_targets(parent).await,
             Message::Connect { target_id, port } => self.connect(&target_id, port).await,
             Message::ShowSessions { scope, target } => {
+                let credentials = self.connection_manager.get_credentials();
                 self.navigate_to(
                     Page::TargetSessions(
                         SessionsPage::new(
@@ -341,6 +344,7 @@ where
                                 self.message_tx.clone(),
                             ),
                             self.message_tx.clone(),
+                            credentials,
                         )
                             .await,
                     ),
