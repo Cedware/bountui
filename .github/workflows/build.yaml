@@ -1,6 +1,7 @@
 name: Build
 permissions:
   contents: write
+  pull-requests: write
 on:
   pull_request:
     branches:
@@ -162,10 +163,16 @@ jobs:
         with:
           ref: develop
           fetch-depth: 0
-      - name: Merge main into develop
+      - name: Create PR develop into main
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git merge origin/main --no-edit
-          git push origin develop
+          gh pr create \
+            --base main \
+            --head develop \
+            --title "chore: sync develop into main" \
+            --body "Automated PR to merge develop into main after release." \
+          || true
+          gh pr merge develop \
+            --auto \
+            --merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
