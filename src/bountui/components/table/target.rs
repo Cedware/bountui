@@ -4,7 +4,7 @@ use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
-use crate::bountui::components::{ConnectionResultDialog, TablePage};
+use crate::bountui::components::{ConnectionEstablishedDialog, TablePage};
 use crate::bountui::remember_user_input::RememberUserInput;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
@@ -41,7 +41,7 @@ pub enum ConnectDialogButtons {
 pub struct TargetsPage<C, S: RememberUserInput> {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
-    connect_result_dialog: Option<ConnectionResultDialog>,
+    connect_result_dialog: Option<ConnectionEstablishedDialog>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     boundary_client: C,
     parent_scope: Scope,
@@ -208,8 +208,8 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
     }
 
     pub fn connection_establised(&mut self, response: ConnectResponse) {
-        self.connect_result_dialog = Some(ConnectionResultDialog::new(
-            response,
+        self.connect_result_dialog = Some(ConnectionEstablishedDialog::new(
+            response.credentials,
             self.message_tx.clone(),
         ));
     }
@@ -258,7 +258,7 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
-        // 1. Handle ConnectionResultDialog FIRST if it's open
+        // 1. Handle ConnectionEstablishedDialog FIRST if it's open
         if let Some(dialog) = &mut self.connect_result_dialog {
             if let Event::Key(key_event) = event {
                 if key_event.code == KeyCode::Esc {

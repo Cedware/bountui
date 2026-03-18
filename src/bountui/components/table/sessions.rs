@@ -1,14 +1,16 @@
 use crate::boundary;
-use crate::boundary::{ApiClient, ApiClientExt, Error, SessionWithTarget};
+use crate::boundary::{ApiClient, ApiClientExt, CredentialEntry, Error, SessionWithTarget};
+use crate::bountui::components::credential_dialog::CredentialDialog;
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::TablePage;
 use crate::bountui::Message;
-use crossterm::event::Event;
+use crossterm::event::{Event, KeyCode, KeyModifiers};
 use futures::FutureExt;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::Frame;
+use std::collections::HashMap;
 use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
@@ -23,6 +25,8 @@ pub struct SessionsPage<R: LoadSessions + Send + 'static> {
     reload_now_tx: mpsc::Sender<()>,
     marker: std::marker::PhantomData<R>,
     cancellation_token: CancellationToken,
+    credentials: Rc<HashMap<String, Vec<CredentialEntry>>>,
+    credential_dialog: Option<CredentialDialog>,
 }
 
 impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
@@ -30,7 +34,10 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
         parent_name: Option<&str>,
         load_sessions: L,
         message_tx: mpsc::Sender<Message>,
+        credentials: HashMap<String, Vec<CredentialEntry>>,
     ) -> Self {
+        let credentials = Rc::new(credentials);
+
         let columns = vec![
             TableColumn::new(
                 "Id".to_string(),
@@ -64,6 +71,7 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
             ),
         ];
 
+        let credentials_for_action = credentials.clone();
         let actions = vec![
             Action::new(
                 "Quit".to_string(),
@@ -77,9 +85,18 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
             ),
             Action::new(
                 "Stop Session".to_string(),
-                "Ctrl + d".to_string(), // Note: Shortcut display only, actual handling is separate
+                "Ctrl + d".to_string(),
                 Box::new(|item: Option<&SessionWithTarget>| {
                     item.map_or(false, |s| s.session.can_cancel())
+                }),
+            ),
+            Action::new(
+                "Show Credentials".to_string(),
+                "v".to_string(),
+                Box::new(move |item: Option<&SessionWithTarget>| {
+                    item.map_or(false, |s| {
+                        credentials_for_action.contains_key(&s.session.id)
+                    })
                 }),
             ),
         ];
@@ -121,6 +138,8 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
             reload_now_tx,
             cancellation_token,
             marker: std::marker::PhantomData,
+            credentials,
+            credential_dialog: None,
         }
     }
 
@@ -136,19 +155,49 @@ impl<L: LoadSessions + Send + Sync + 'static> SessionsPage<L> {
         }
     }
 
+    fn show_credentials(&mut self) {
+        if let Some(session) = self.table_page.selected_item() {
+            if let Some(creds) = self.credentials.get(&session.session.id) {
+                self.credential_dialog = Some(CredentialDialog::new(
+                    creds.clone(),
+                    self.message_tx.clone(),
+                ));
+            }
+        }
+    }
+
     pub fn view(&self, frame: &mut Frame, area: Rect) {
         self.table_page.view(frame, area);
+        if let Some(dialog) = &self.credential_dialog {
+            dialog.view(frame);
+        }
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
+        if let Some(dialog) = &mut self.credential_dialog {
+            if let Event::Key(key_event) = event {
+                if key_event.code == KeyCode::Esc {
+                    self.credential_dialog = None;
+                    return;
+                }
+            }
+            dialog.handle_event(event).await;
+            return;
+        }
+
         if self.table_page.handle_event(event).await {
             return;
         }
         if let Event::Key(key_event) = event {
-            if key_event.code == crossterm::event::KeyCode::Char('d')
-                && key_event.modifiers == crossterm::event::KeyModifiers::CONTROL
+            if key_event.code == KeyCode::Char('d')
+                && key_event.modifiers == KeyModifiers::CONTROL
             {
                 self.stop_session().await;
+            }
+            if key_event.code == KeyCode::Char('v')
+                && key_event.modifiers == KeyModifiers::NONE
+            {
+                self.show_credentials();
             }
         }
     }
