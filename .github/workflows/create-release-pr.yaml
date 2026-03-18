@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
       - name: Create or update release PR
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_GITHUB }}
         run: |
           existing_pr=$(gh pr list --base main --head develop --json number --jq '.[0].number')
           if [ -n "$existing_pr" ]; then
