@@ -268,7 +268,10 @@ impl<T> TablePage<T> where Self: SortItems<T> {
                     return true;
                 }
                 KeyCode::Down => {
-                    self.table_state.borrow_mut().select_next();
+                    let current = self.table_state.borrow().selected().unwrap_or(0);
+                    if current + 1 < self.visible_items.len() {
+                        self.table_state.borrow_mut().select_next();
+                    }
                     return true;
                 },
                 KeyCode::PageDown => {
