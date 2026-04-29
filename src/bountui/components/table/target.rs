@@ -385,7 +385,7 @@ mod test {
 
     #[tokio::test]
     async fn test_close_connect_dialog() {
-        let (msg_tx, _) = tokio::sync::mpsc::channel(10);
+        let (msg_tx, _msg_rx) = tokio::sync::mpsc::channel(10);
         let client = boundary::client::MockApiClient::new();
         let remember_user_input = MockRememberUserInput::default();
         let mut sut = TargetsPage::new(create_parent_scope(), msg_tx, Arc::new(client), remember_user_input).await;
