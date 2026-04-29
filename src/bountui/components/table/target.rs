@@ -8,6 +8,7 @@ use crate::bountui::components::{ConnectionEstablishedDialog, TablePage};
 use crate::bountui::remember_user_input::RememberUserInput;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
+use crate::event_ext::EventExt;
 use crate::util::MpscSenderExt;
 use crossterm::event::{Event, KeyCode};
 use futures::FutureExt;
@@ -260,11 +261,9 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
     pub async fn handle_event(&mut self, event: &Event) {
         // 1. Handle ConnectionEstablishedDialog FIRST if it's open
         if let Some(dialog) = &mut self.connect_result_dialog {
-            if let Event::Key(key_event) = event {
-                if key_event.code == KeyCode::Esc {
-                    self.close_connect_result_dialog();
-                    return; // Consume Esc, don't forward
-                }
+            if event.is_esc() {
+                self.close_connect_result_dialog();
+                return; // Consume Esc, don't forward
             }
             // Forward all other events to the dialog
             dialog.handle_event(event).await;
@@ -273,6 +272,10 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
 
         // 2. Handle ConnectDialog if it's open
         if let Some(connect_dialog) = &mut self.connect_dialog {
+            if event.is_esc() {
+                self.close_connect_dialog();
+                return; // Consume Esc, don't forward
+            }
             match connect_dialog.handle_event(event) {
                 Some(ConnectDialogButtons::Cancel) => {
                     self.close_connect_dialog();
@@ -345,5 +348,51 @@ impl FilterItems<boundary::Target> for TablePage<boundary::Target> {
         Self::match_str(&item.name, search)
             || Self::match_str(&item.description, search)
             || Self::match_str(&item.id, search)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::bountui::remember_user_input::tests::MockRememberUserInput;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn create_parent_scope() -> Scope {
+        Scope {
+            id: "scope-id".to_string(),
+            name: "Test Scope".to_string(),
+            description: "A test scope".to_string(),
+            type_name: "test".to_string(),
+            authorized_collection_actions: HashMap::new(),
+        }
+    }
+
+    fn create_targets() -> Vec<Target> {
+        vec![
+            Target {
+                id: "target-1".to_string(),
+                name: "target 1".to_string(),
+                description: "target 1".to_string(),
+                type_name: "target".to_string(),
+                authorized_collection_actions: Default::default(),
+                authorized_actions: vec!["authorize-session".to_string()],
+                scope_id: "scope-id".to_string(),
+                attributes: None,
+            }
+        ]
+    }
+
+    #[tokio::test]
+    async fn test_close_connect_dialog() {
+        let (msg_tx, _msg_rx) = tokio::sync::mpsc::channel(10);
+        let client = boundary::client::MockApiClient::new();
+        let remember_user_input = MockRememberUserInput::default();
+        let mut sut = TargetsPage::new(create_parent_scope(), msg_tx, Arc::new(client), remember_user_input).await;
+        sut.handle_message(TargetsPageMessage::TargetsLoaded(create_targets()));
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('c')))).await; // Open connect dialog
+        assert!(sut.connect_dialog.is_some(), "Connect dialog should be open");
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc))).await; // Press Esc to close
+        assert!(sut.connect_dialog.is_none(), "Connect dialog should be closed after pressing Esc");
     }
 }

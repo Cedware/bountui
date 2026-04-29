@@ -11,7 +11,6 @@ struct UserInputs {
 }
 
 
-#[cfg_attr(test, mockall::automock)]
 pub trait RememberUserInput {
     fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()>;
     fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>>;
@@ -101,11 +100,28 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::bountui::{RememberUserInput, UserInputsPath};
+    use std::collections::HashMap;
     use std::io::Write;
     use std::path::Path;
     use tempfile::NamedTempFile;
+
+    #[derive(Default)]
+    pub struct MockRememberUserInput {
+        ports: HashMap<String, u16>,
+    }
+
+    impl RememberUserInput for MockRememberUserInput {
+        fn store_local_port(&mut self, _target: String, _port: u16) -> anyhow::Result<()> {
+            self.ports.insert(_target, _port);
+            Ok(())
+        }
+
+        fn get_local_port(&self, _target_id: &String) -> anyhow::Result<Option<u16>> {
+            Ok(self.ports.get(_target_id).copied())
+        }
+    }
 
     const JSON: &str = "{\"local_ports\": {\"target_id\": 8080}}";
 
