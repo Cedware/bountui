@@ -5,26 +5,26 @@ pub mod sessions;
 pub mod target;
 mod util;
 
-use std::cell::{Cell, RefCell};
-use std::cmp::{max, min};
 use crossterm::event::{Event, KeyCode};
 use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style, Stylize};
+use std::cell::{Cell, RefCell};
+use std::cmp::{max, min};
 
 use crate::bountui::components::table::filter::Filter;
+use crate::bountui::components::util::center;
+use crate::bountui::Message;
+use crate::bountui::Message::GoBack;
+pub use action::Action;
+use ratatui::prelude::Rect;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::block::{Position, Title};
 use ratatui::widgets::{Block, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
 use std::rc::Rc;
-use ratatui::prelude::Rect;
 use tokio::sync::mpsc;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
-use crate::bountui::Message;
-use crate::bountui::Message::GoBack;
-pub use action::Action;
-use crate::bountui::components::util::center;
 
 pub trait SortItems<T> {
     fn sort(items: &mut Vec<Rc<T>>);
@@ -332,13 +332,13 @@ impl<T> TablePage<T> where Self: SortItems<T> {
 
 #[cfg(test)]
 mod test {
-    use std::rc::Rc;
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::prelude::Constraint;
-    use tokio::sync::mpsc;
     use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
     use crate::bountui::components::TablePage;
     use crate::bountui::Message;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::prelude::Constraint;
+    use std::rc::Rc;
+    use tokio::sync::mpsc;
 
     struct TestItem {
         col_a: String,
@@ -346,7 +346,7 @@ mod test {
     }
 
     impl SortItems<TestItem> for TablePage<TestItem>{
-        fn sort(items: &mut Vec<Rc<TestItem>>) {
+        fn sort(_items: &mut Vec<Rc<TestItem>>) {
         }
     }
 

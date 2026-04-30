@@ -1,16 +1,17 @@
 pub mod cli;
 mod response;
+#[cfg(test)]
+pub mod mock;
 
 use crate::boundary::client::response::AuthenticateResponse;
 use crate::boundary::error::Error;
 use crate::boundary::models::{ConnectResponse, SessionWithTarget, Target};
 use crate::boundary::{Scope, Session};
+use std::fmt::{Debug, Display};
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[cfg_attr(test, mockall::automock(type ConnectionHandle = Arc<tokio::sync::Mutex<MockBoundaryConnectionHandle>>;
-))]
 pub trait ApiClient {
     type ConnectionHandle: BoundaryConnectionHandle;
 
@@ -86,9 +87,8 @@ pub trait ApiClientExt: ApiClient + Sync {
 
 impl<T: ApiClient + Sync> ApiClientExt for T {}
 
-#[cfg_attr(test, mockall::automock(type Error = crate::mock::StubError;))]
 pub trait BoundaryConnectionHandle: Send {
-    type Error: std::error::Error + Send;
+    type Error: Display + Debug + Send;
 
     fn wait(&mut self) -> impl Future<Output=Result<(), Self::Error>> + Send;
     fn stop(&mut self) -> impl Future<Output=Result<(), Self::Error>> + Send;

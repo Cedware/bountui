@@ -462,11 +462,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boundary::client::MockApiClient;
     use crate::bountui::connection_manager::MockConnectionManager;
     use crate::util::clipboard::{ClipboardAccessError, MockClipboardAccess};
     use mockall::predicate::eq;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn set_clipboard_success_clears_alert() {
@@ -476,7 +474,7 @@ mod tests {
             .with(eq("hello".to_string()))
             .returning(|_| Ok(()));
 
-        let boundary_client: Arc<MockApiClient> = Arc::new(MockApiClient::new());
+        let boundary_client = boundary::MockClient::builder().build();
         let connection_manager = MockConnectionManager::new();
         let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
@@ -507,7 +505,7 @@ mod tests {
             .with(eq("oops".to_string()))
             .returning(|_| Err(ClipboardAccessError::Unknown("boom".to_string())));
 
-        let boundary_client: Arc<MockApiClient> = Arc::new(MockApiClient::new());
+        let boundary_client = boundary::MockClient::builder().build();
         let connection_manager = MockConnectionManager::new();
         let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
