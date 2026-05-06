@@ -12,4 +12,6 @@ pub enum Error {
     JsonError(#[from] serde_json::Error),
     #[error("Failed to parse Boundary version: {0}")]
     VersionParseError(String),
+    #[error("Boundary failed to connect in time")]
+    ConnectTimeoutError
 }
