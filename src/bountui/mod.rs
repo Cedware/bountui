@@ -416,6 +416,13 @@ where
         }
     }
 
+    #[cfg(test)]
+    async fn process_pending_messages(&mut self) {
+        while let Ok(message) = self.message_rx.try_recv() {
+            self.handle_message(message).await;
+        }
+    }
+
     pub async fn run(&mut self) {
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
@@ -561,6 +568,7 @@ mod tests {
             target_id: "TARGET_DOES_NOT_EXIST".to_string(),
             port: 8080,
         }).await;
-        assert!(app.alert.is_some(), "Alert should not be set on connect success");
+        app.process_pending_messages().await;
+        assert!(app.alert.is_some(), "Expected error alert on connect failure");
     }
 }
