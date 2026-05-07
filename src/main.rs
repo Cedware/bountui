@@ -1,21 +1,20 @@
+
 mod boundary;
 mod bountui;
 pub mod event_ext;
 mod util;
 mod cross_term;
-#[cfg(test)]
-mod mock;
 
 use crate::boundary::ApiClient;
 use crate::bountui::{BountuiApp, UserInputsPath};
 use crate::cross_term::receive_cross_term_events;
-use crate::util::clipboard::{ClipboardAccess, ArboardClipboard, BrokenClipboard};
+use crate::util::clipboard::{ArboardClipboard, BrokenClipboard, ClipboardAccess};
+use anyhow::Context;
+use flexi_logger::LoggerHandle;
+use log::error;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use flexi_logger::LoggerHandle;
-use anyhow::Context;
-use log::error;
 
 fn init_logger() -> anyhow::Result<LoggerHandle> {
     // Initialize logging with flexi_logger

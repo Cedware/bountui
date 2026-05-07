@@ -161,184 +161,102 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::boundary::client::{MockApiClient, MockBoundaryConnectionHandle};
-    use crate::boundary::ConnectResponse;
+    use crate::boundary;
+    use crate::boundary::{Scope, Target};
     use crate::bountui::connection_manager::{ConnectionManager, DefaultConnectionManager};
-    use crate::mock::StubError;
-    use chrono::{TimeDelta, Utc};
-    use futures::FutureExt;
-    use mockall::predicate::eq;
-    use std::future::pending;
+    use chrono::TimeDelta;
+    use std::collections::HashMap;
     use std::ops::Add;
-    use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::Mutex;
-    use tokio_test::assert_ok;
 
-    struct SessionConfig {
-        session_id: String,
-        connection_handle: Arc<Mutex<MockBoundaryConnectionHandle>>,
-        expect_cancellation: bool,
-        life_time: TimeDelta,
-    }
+    const TARGET_ID: &str = "target-1";
+    const SCOPE_ID: &str = "scope-1";
 
-    fn configure_connection_handle(
-        stop_result: Option<Result<(), StubError>>,
-    ) -> Arc<Mutex<MockBoundaryConnectionHandle>> {
-        let mut connection_handle = MockBoundaryConnectionHandle::new();
-        connection_handle
-            .expect_wait()
-            .times(1)
-            .returning(|| pending().boxed());
+    fn create_boundary_client() -> boundary::MockClient {
+        let mut scopes = HashMap::new();
+        scopes.insert(None, vec![Scope {
+            id: SCOPE_ID.to_string(),
+            name: "scope 1".to_string(),
+            description: "scope 1".to_string(),
+            type_name: "".to_string(),
+            authorized_collection_actions: Default::default(),
+        }]);
 
-        if let Some(stop_result) = stop_result {
-            connection_handle
-                .expect_stop()
-                .times(1)
-                .return_once(|| async { stop_result }.boxed());
-        }
+        let mut targets = HashMap::new();
+        targets.insert(Some("scope-1".to_string()), vec![Target {
+            id: TARGET_ID.to_string(),
+            name: "target 1".to_string(),
+            description: "target 1".to_string(),
+            type_name: "".to_string(),
+            authorized_collection_actions: Default::default(),
+            authorized_actions: vec![],
+            scope_id: "scope-1".to_string(),
+            attributes: None,
+        }]);
 
-        Arc::new(Mutex::new(connection_handle))
-    }
-
-    fn configure_boundary_client(
-        sessions: Vec<SessionConfig>,
-    ) -> MockApiClient {
-        let mut boundary_client = MockApiClient::new();
-
-        for session_config in sessions {
-            let session_id = session_config.session_id.clone();
-            let connection_handle = session_config.connection_handle;
-            boundary_client
-                .expect_connect()
-                .times(1)
-                .return_once(move |_, _| {
-                    let connect_response = ConnectResponse {
-                        session_id,
-                        credentials: vec![],
-                        expiration: Utc::now().add(session_config.life_time),
-                    };
-                    Ok((connect_response, connection_handle))
-                });
-
-            if session_config.expect_cancellation {
-                boundary_client
-                    .expect_cancel_session()
-                    .times(1)
-                    .with(eq(session_config.session_id))
-                    .return_once(|_| Ok(()));
-            }
-        }
-
-
-        boundary_client
+        boundary::MockClient::builder()
+            .session_lifetime(TimeDelta::hours(8))
+            .scopes(scopes)
+            .targets(targets)
+            .build()
     }
 
     #[tokio::test(start_paused = true)]
     async fn test_connection_is_closed_after_sessions_is_expired() {
-        let session_id = "session-id";
-        let connection_handle_stop_result = Ok(());
-        let connection_handle_1 = configure_connection_handle(Some(connection_handle_stop_result));
-        let session_config = SessionConfig {
-            session_id: session_id.to_string(),
-            expect_cancellation: false,
-            life_time: TimeDelta::hours(8),
-            connection_handle: connection_handle_1.clone(),
-        };
-
-        let boundary_client =
-            configure_boundary_client(vec![session_config]);
-        let sut = DefaultConnectionManager::new(boundary_client);
-        sut.connect("target_id", 8080).await.unwrap();
+        let boundary_client = create_boundary_client();
+        let sut = DefaultConnectionManager::new(boundary_client.clone());
+        let connect_response = sut.connect(TARGET_ID, 8080).await.unwrap();
         tokio::time::sleep(TimeDelta::hours(8).add(TimeDelta::minutes(1)).to_std().unwrap()).await;
-        connection_handle_1.lock().await.checkpoint();
+        let connection_handle = boundary_client.get_connection_handle(&connect_response.session_id).await.unwrap();
+        assert!(connection_handle.is_stopped(), "The connection handle should be stopped after the session is expired");
+
     }
+
 
     #[tokio::test(start_paused = true)]
     async fn test_connection_is_not_closed_before_session_is_expired() {
-        let session_id = "session-id";
-        let connection_handle_stop_result = None;
-        let connection_handle = configure_connection_handle(connection_handle_stop_result);
-        let session_config = SessionConfig {
-            session_id: session_id.to_string(),
-            expect_cancellation: false,
-            life_time: TimeDelta::seconds(10),
-            connection_handle: connection_handle.clone(),
-        };
-        let boundary_client =
-            configure_boundary_client(vec![session_config]);
-        let sut = DefaultConnectionManager::new(boundary_client);
-        sut.connect("target_id", 8080).await.unwrap();
+        let boundary_client = create_boundary_client();
+        let sut = DefaultConnectionManager::new(boundary_client.clone());
+        let connect_response = sut.connect(TARGET_ID, 8080).await.unwrap();
         tokio::time::sleep(Duration::from_secs(5)).await;
-        connection_handle.lock().await.checkpoint();
+        let connection_handle = boundary_client.get_connection_handle(&connect_response.session_id).await.unwrap();
+        assert!(!connection_handle.is_stopped(), "The connection handle should not be stopped before the session is expired");
     }
 
     #[tokio::test(start_paused = true)]
     async fn test_stop_session() {
-        let session_id = "session-id";
-        let connection_handle_stop_result = Some(Ok(()));
-        let connection_handle = configure_connection_handle(connection_handle_stop_result);
-        let session_config = SessionConfig {
-            session_id: session_id.to_string(),
-            expect_cancellation: true,
-            life_time: TimeDelta::hours(8),
-            connection_handle: connection_handle.clone(),
-        };
-        let boundary_client = configure_boundary_client(vec![session_config]);
-        let sut = DefaultConnectionManager::new(boundary_client);
+        let boundary_client = create_boundary_client();
+        let sut = DefaultConnectionManager::new(boundary_client.clone());
         let resp = sut
-            .connect("target_id", 8080)
+            .connect(TARGET_ID, 8080)
             .await
             .expect("Should be able to connect to target");
         tokio::time::sleep(Duration::from_secs(5)).await;
         sut.stop(&resp.session_id)
             .await
             .expect("Should be able to stop session");
-        connection_handle.lock().await.checkpoint();
+        let connection_handle = boundary_client.get_connection_handle(&resp.session_id).await.expect("Should be able to get connection handle");
+        assert!(connection_handle.is_stopped(), "The connection handle should stopped");
     }
 
     #[tokio::test(start_paused = true)]
     async fn test_shutdown() {
-        let connection_handle_1_stop_result = Some(Ok(()));
-        let connection_handle_1 = configure_connection_handle(connection_handle_1_stop_result);
-        let session_1_config = SessionConfig {
-            session_id: "session_id_1".to_string(),
-            expect_cancellation: true,
-            life_time: TimeDelta::hours(8),
-            connection_handle: connection_handle_1.clone(),
-        };
+        let boundary_client = create_boundary_client();
+        let sut = DefaultConnectionManager::new(boundary_client.clone());
 
-        let connection_handle_2_stop_result = Some(Ok(()));
-        let connection_handle_2 = configure_connection_handle(connection_handle_2_stop_result);
-        let session_2_config = SessionConfig {
-            session_id: "session_id_2".to_string(),
-            expect_cancellation: true,
-            life_time: TimeDelta::hours(8),
-            connection_handle: connection_handle_2.clone(),
-        };
-
-        let connection_handle_3_stop_result = Some(Ok(()));
-        let connection_handle_3 = configure_connection_handle(connection_handle_3_stop_result);
-        let session_3_config = SessionConfig {
-            session_id: "session_id_3".to_string(),
-            expect_cancellation: true,
-            life_time: TimeDelta::hours(8),
-            connection_handle: connection_handle_3.clone(),
-        };
-
-        let boundary_client = configure_boundary_client(vec![
-            session_1_config,
-            session_2_config,
-            session_3_config]
-        );
-        let sut = DefaultConnectionManager::new(boundary_client);
-        sut.connect("target_id_1", 8081).await.unwrap();
-        sut.connect("target_id_2", 8082).await.unwrap();
-        sut.connect("target_id_3", 8083).await.unwrap();
+        let connect_response_1 = sut.connect(TARGET_ID, 8080).await.expect("Should be able to connect to target");
+        let connect_response_2 = sut.connect(TARGET_ID, 8081).await.expect("Should be able to connect to target");
+        let connect_response_3 = sut.connect(TARGET_ID, 8082).await.expect("Should be able to connect to target");
 
         tokio::time::sleep(Duration::from_secs(5)).await;
-        let result = sut.shutdown().await;
+        sut.shutdown().await.expect("Shutdown should succeed");
 
-        assert_ok!(result, "The result should be Ok");
+        let connection_handle_1 = boundary_client.get_connection_handle(&connect_response_1.session_id).await.expect("Should be able to get connection handle");
+        let connection_handle_2 = boundary_client.get_connection_handle(&connect_response_2.session_id).await.expect("Should be able to get connection handle");
+        let connection_handle_3 = boundary_client.get_connection_handle(&connect_response_3.session_id).await.expect("Should be able to get connection handle");
+
+        assert!(connection_handle_1.is_stopped(), "The connection handle should stopped");
+        assert!(connection_handle_2.is_stopped(), "The connection handle should stop");
+        assert!(connection_handle_3.is_stopped(), "The connection handle should stop");
     }
 }

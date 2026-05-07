@@ -9,15 +9,17 @@ use crate::boundary::client::BoundaryConnectionHandle;
 use crate::boundary::models::{ConnectResponse, Target};
 use crate::boundary::Error::CliError;
 use crate::boundary::{ApiClient, Error, Scope, Session};
+use log::debug;
+use semver::Version;
+use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::net::TcpListener;
 use std::process::{Output, Stdio};
-use log::debug;
-use serde::de::IgnoredAny;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::OnceCell;
-use semver::Version;
+
+const CONNECT_TIMEOUT_MS: i32 = 5000;
 
 /// Parse the Boundary CLI version from the `boundary version` command output.
 /// Extracts the version string from "Version Number: X.Y.Z" format.
@@ -207,8 +209,9 @@ where
         target_id: &str,
         port: u16,
     ) -> Result<(ConnectResponse, R::Child), Error> {
-        //Check if the port is available
-        TcpListener::bind(format!("127.0.0.1:{port}"))?;
+        // Check if the port is available
+        TcpListener::bind(format!("127.0.0.1:{port}"))
+            .map_err(|_| Error::PortNotAvailable(port))?;
 
         let port_str = port.to_string();
         let mut args = vec![
@@ -239,10 +242,13 @@ where
             .expect("This should never happen since we are piping stdout");
         let std_read = BufReader::new(stdout);
 
-        let response = std_read
-            .lines()
-            .next_line()
-            .await?
+        let mut response_lines = std_read
+            .lines();
+
+        let a = tokio::time::timeout(std::time::Duration::from_millis(CONNECT_TIMEOUT_MS as u64), response_lines.next_line())
+            .await;
+
+        let response = a.map_err(|_e| Error::ConnectTimeoutError)??
             .ok_or(CliError(None, "No response from boundary".to_string()))?;
 
         let response: ConnectResponse = serde_json::from_str(&response)?;
@@ -271,34 +277,20 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::boundary::client::cli::command_runner::{MockChild, MockCommandRunner};
+    use crate::boundary::client::cli::command_runner::mock::{MockChild, MockCommandRunner};
     use crate::boundary::client::response::ListResponse;
     use crate::boundary::{ApiClient, CliClient, ConnectResponse, Error, Scope};
     use chrono::{TimeDelta, Utc};
-    use mockall::predicate;
     use std::net::TcpListener;
     use std::ops::Add;
     use std::os::unix::process::ExitStatusExt;
-    use std::process::Output;
     use std::sync::Arc;
-    use tokio::io;
     use tokio_test::assert_ok;
-
-    async fn create_output_result(
-        status: i32,
-        stdout: String,
-        stderr: String,
-    ) -> io::Result<Output> {
-        Ok(Output {
-            status: std::process::ExitStatus::from_raw(status),
-            stdout: stdout.into_bytes(),
-            stderr: stderr.into_bytes(),
-        })
-    }
+    use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn test_get_scopes() {
-        let mut command_runner = MockCommandRunner::new();
+
 
         let response = ListResponse {
             items: Some(vec![Scope::builder()
@@ -311,17 +303,10 @@ mod test {
         };
         let response_json = serde_json::to_string(&response).unwrap();
 
-        command_runner
-            .expect_output()
-            .times(1)
-            .with(predicate::always())
-            .returning(move |_| {
-                Box::pin(create_output_result(
-                    0,
-                    response_json.to_string(),
-                    "".to_string(),
-                ))
-            });
+        let std_out = Builder::new().read(response_json.as_bytes()).build();
+        let mock_result = MockChild::new(Ok(0), Some(std_out));
+        let command_runner = MockCommandRunner::new(vec![mock_result].into());
+
         let client = CliClient {
             bin_path: "boundary".to_string(),
             command_runner,
@@ -334,44 +319,18 @@ mod test {
 
     #[tokio::test]
     async fn test_connect() {
-        let mut command_runner = MockCommandRunner::new();
-
         let expected_response = ConnectResponse {
             credentials: vec![],
             session_id: "session_id".to_string(),
             expiration: Utc::now().add(TimeDelta::seconds(20)),
         };
-        let response_json = serde_json::to_vec(&expected_response).unwrap();
+        let response_json = serde_json::to_string(&expected_response).unwrap();
+        let std_out = Builder::new().read(response_json.as_bytes()).build();
+        let command_runner = MockCommandRunner::new(vec![
+            MockChild::new(Ok(0), Some(Builder::new().read("Version Number: 0.20.0\n".to_string().as_bytes()).build())),
+            MockChild::new(Ok(0), Some(std_out))
+        ].into());
 
-        // Mock the version command output (version < 0.21.0, no inactive-timeout support)
-        command_runner
-            .expect_output()
-            .times(1)
-            .with(predicate::always())
-            .returning(move |_| {
-                Box::pin(create_output_result(
-                    0,
-                    "Version Number: 0.20.0\n".to_string(),
-                    String::new(),
-                ))
-            });
-
-        command_runner
-            .expect_spawn()
-            .times(1)
-            .with(predicate::always())
-            .returning(move |_| {
-                let mut child = MockChild::new();
-                let response_json = response_json.clone();
-                child.expect_stdout().returning(move || {
-                    Some(
-                        tokio_test::io::Builder::new()
-                            .read(&response_json.clone())
-                            .build(),
-                    )
-                });
-                Ok(child)
-            });
 
         let sut = CliClient {
             bin_path: "boundary".to_string(),
@@ -383,12 +342,11 @@ mod test {
         let port = tcp_listener.local_addr().unwrap().port();
         let response = sut.connect("target_id", port).await;
         assert!(
-            matches!(response, Err(Error::Io(_))),
-            "connect did not return expected io error, while the port is already in use"
+            matches!(response, Err(Error::PortNotAvailable(p)) if p == port),
+            "connect did not return PortNotAvailable error while the port is already in use"
         );
         drop(tcp_listener);
         let result = sut.connect("target_id", port).await;
-        println!("{:?}", response);
         assert_ok!(&result, "connect should return Ok");
         let (response, _) = result.unwrap();
         assert_eq!(
@@ -399,7 +357,6 @@ mod test {
 
     #[tokio::test]
     async fn test_cancel_session_success() {
-        let mut command_runner = MockCommandRunner::new();
 
         // JSON returned by boundary sessions cancel -format json
         let response_json = r#"{
@@ -445,13 +402,8 @@ mod test {
    }
 }"#;
 
-        command_runner
-            .expect_output()
-            .times(1)
-            .with(predicate::always())
-            .returning(move |_| {
-                Box::pin(create_output_result(0, response_json.to_string(), String::new()))
-            });
+        let child = MockChild::new(Ok(0), Some(Builder::new().read(response_json.as_bytes()).build()));
+        let command_runner = MockCommandRunner::new(vec![child].into());
 
         let client = CliClient {
             bin_path: "boundary".to_string(),
@@ -465,7 +417,6 @@ mod test {
 
     #[tokio::test]
     async fn test_connect_with_inactive_timeout_support() {
-        let mut command_runner = MockCommandRunner::new();
 
         let expected_response = ConnectResponse {
             credentials: vec![],
@@ -474,35 +425,9 @@ mod test {
         };
         let response_json = serde_json::to_vec(&expected_response).unwrap();
 
-        // Mock the version command output (version >= 0.21.0, supports inactive-timeout)
-        command_runner
-            .expect_output()
-            .times(1)
-            .with(predicate::always())
-            .returning(move |_| {
-                Box::pin(create_output_result(
-                    0,
-                    "Version Number: 0.21.0\n".to_string(),
-                    String::new(),
-                ))
-            });
-
-        command_runner
-            .expect_spawn()
-            .times(1)
-            .with(predicate::always())
-            .returning(move |_| {
-                let mut child = MockChild::new();
-                let response_json = response_json.clone();
-                child.expect_stdout().returning(move || {
-                    Some(
-                        tokio_test::io::Builder::new()
-                            .read(&response_json.clone())
-                            .build(),
-                    )
-                });
-                Ok(child)
-            });
+        let version_number_child = MockChild::new(Ok(0), Some(Builder::new().read("Version Number: 0.21.0\n".as_bytes()).build()));
+        let connect_child = MockChild::new(Ok(0), Some(Builder::new().read(&response_json).build()));
+        let command_runner = MockCommandRunner::new(vec![version_number_child, connect_child].into());
 
         let sut = CliClient {
             bin_path: "boundary".to_string(),
@@ -525,7 +450,15 @@ mod test {
 
     mod parse_boundary_version_tests {
         use super::super::parse_boundary_version;
+        use crate::boundary;
+        use crate::boundary::client::cli::command_runner::mock::{MockChild, MockCommandRunner};
+        use crate::boundary::client::cli::CONNECT_TIMEOUT_MS;
+        use crate::boundary::{ApiClient, CliClient, ConnectResponse};
+        use chrono::{TimeDelta, Utc};
         use semver::Version;
+        use std::ops::Add;
+        use std::sync::Arc;
+        use tokio_test::io::Builder;
 
         #[test]
         fn test_parse_valid_version() {
@@ -565,6 +498,37 @@ mod test {
             let version = parse_boundary_version(output);
             assert!(version.is_err());
             assert!(version.unwrap_err().contains("invalid version"));
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn test_connect_should_fail_when_boundary_does_not_connect_in_time() {
+            let expected_response = ConnectResponse {
+                credentials: vec![],
+                session_id: "session_id".to_string(),
+                expiration: Utc::now().add(TimeDelta::seconds(20)),
+            };
+            let response_json = serde_json::to_string(&expected_response).unwrap();
+            let std_out = Builder::new()
+                .wait(std::time::Duration::from_millis((CONNECT_TIMEOUT_MS + 1000) as u64)).build();
+
+            let command_runner = MockCommandRunner::new(vec![
+                MockChild::new(Ok(0), Some(Builder::new().read("Version Number: 0.20.0\n".to_string().as_bytes()).build())),
+                MockChild::new(Ok(0), Some(std_out))
+            ].into());
+
+
+            let sut = CliClient {
+                bin_path: "boundary".to_string(),
+                command_runner,
+                cached_version: Arc::new(tokio::sync::OnceCell::new()),
+            };
+
+            let result = sut.connect("target_id", 8080).await;
+            match result {
+                Ok(_) => panic!("connect should have failed due to timeout, but it succeeded"),
+                Err(boundary::Error::ConnectTimeoutError { .. }) => {},
+                Err(e) => panic!("connect should fail with ConnectTimeoutError but it failed with {}", e),
+            }
         }
     }
 }

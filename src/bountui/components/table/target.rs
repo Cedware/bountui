@@ -383,10 +383,24 @@ mod test {
         ]
     }
 
+    fn create_boundary_client() -> boundary::MockClient {
+        let mut scopes = HashMap::new();
+        scopes.insert(None, vec![create_parent_scope()]);
+
+        let mut targets = HashMap::new();
+        targets.insert(Some("scope-id".to_string()), create_targets());
+
+        boundary::MockClient::builder()
+            .scopes(scopes)
+            .targets(targets)
+            .build()
+    }
+
+
     #[tokio::test]
     async fn test_close_connect_dialog() {
         let (msg_tx, _msg_rx) = tokio::sync::mpsc::channel(10);
-        let client = boundary::client::MockApiClient::new();
+        let client = create_boundary_client();
         let remember_user_input = MockRememberUserInput::default();
         let mut sut = TargetsPage::new(create_parent_scope(), msg_tx, Arc::new(client), remember_user_input).await;
         sut.handle_message(TargetsPageMessage::TargetsLoaded(create_targets()));
