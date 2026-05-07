@@ -232,7 +232,8 @@ where
             Err(e) => {
                 let _ = self
                     .message_tx
-                    .send(Message::show_error("Connection Error", e));
+                    .send(Message::show_error("Connection Error", e))
+                    .await;
             }
         }
     }
@@ -459,12 +460,20 @@ where
 }
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bountui::connection_manager::MockConnectionManager;
+    use crate::bountui::connection_manager::{DefaultConnectionManager, MockConnectionManager};
     use crate::util::clipboard::{ClipboardAccessError, MockClipboardAccess};
     use mockall::predicate::eq;
+    use std::collections::HashMap;
+
+    fn make_boundary_client() -> boundary::MockClient {
+        boundary::MockClient::builder()
+            .scopes(HashMap::new())
+            .build()
+    }
 
     #[tokio::test]
     async fn set_clipboard_success_clears_alert() {
@@ -474,13 +483,12 @@ mod tests {
             .with(eq("hello".to_string()))
             .returning(|_| Ok(()));
 
-        let boundary_client = boundary::MockClient::builder().build();
         let connection_manager = MockConnectionManager::new();
         let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
         let mut app = BountuiApp::new(
-            boundary_client,
+            make_boundary_client(),
             "user-1".to_string(),
             connection_manager,
             remember_user_input,
@@ -505,13 +513,12 @@ mod tests {
             .with(eq("oops".to_string()))
             .returning(|_| Err(ClipboardAccessError::Unknown("boom".to_string())));
 
-        let boundary_client = boundary::MockClient::builder().build();
         let connection_manager = MockConnectionManager::new();
         let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
         let mut app = BountuiApp::new(
-            boundary_client,
+            make_boundary_client(),
             "user-1".to_string(),
             connection_manager,
             remember_user_input,
@@ -531,5 +538,29 @@ mod tests {
             }
             None => panic!("Expected clipboard error alert to be set"),
         }
+    }
+
+    #[tokio::test]
+    async fn connect_shows_error_when_connect_fails() {
+        let boundary_client = make_boundary_client();
+        let connection_manager = DefaultConnectionManager::new(boundary_client);
+
+        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
+        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
+
+        let mut app = BountuiApp::new(
+            make_boundary_client(),
+            "user-1".to_string(),
+            connection_manager,
+            remember_user_input,
+            evt_rx,
+            Box::new(MockClipboardAccess::new()),
+        ).await;
+
+        app.handle_message(Message::Connect {
+            target_id: "TARGET_DOES_NOT_EXIST".to_string(),
+            port: 8080,
+        }).await;
+        assert!(app.alert.is_some(), "Alert should not be set on connect success");
     }
 }

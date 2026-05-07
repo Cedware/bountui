@@ -14,7 +14,6 @@ pub struct MockClient {
     session_lifetime: Duration,
     #[builder(default)]
     user_id: String,
-    #[builder(default)]
     scopes: HashMap<Option<String>, Vec<Scope>>,
     #[builder(default)]
     targets: HashMap<Option<String>, Vec<Target>>,
