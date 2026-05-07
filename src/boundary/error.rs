@@ -13,5 +13,7 @@ pub enum Error {
     #[error("Failed to parse Boundary version: {0}")]
     VersionParseError(String),
     #[error("Boundary failed to connect in time")]
-    ConnectTimeoutError
+    ConnectTimeoutError,
+    #[error("Port {0} is not available")]
+    PortNotAvailable(u16),
 }

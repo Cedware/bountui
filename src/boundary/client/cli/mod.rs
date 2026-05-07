@@ -210,7 +210,8 @@ where
         port: u16,
     ) -> Result<(ConnectResponse, R::Child), Error> {
         // Check if the port is available
-        TcpListener::bind(format!("127.0.0.1:{port}"))?;
+        TcpListener::bind(format!("127.0.0.1:{port}"))
+            .map_err(|_| Error::PortNotAvailable(port))?;
 
         let port_str = port.to_string();
         let mut args = vec![
@@ -341,8 +342,8 @@ mod test {
         let port = tcp_listener.local_addr().unwrap().port();
         let response = sut.connect("target_id", port).await;
         assert!(
-            matches!(response, Err(Error::Io(_))),
-            "connect did not return expected io error, while the port is already in use"
+            matches!(response, Err(Error::PortNotAvailable(p)) if p == port),
+            "connect did not return PortNotAvailable error while the port is already in use"
         );
         drop(tcp_listener);
         let result = sut.connect("target_id", port).await;
