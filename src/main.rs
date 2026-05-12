@@ -7,6 +7,7 @@ mod cross_term;
 
 use crate::boundary::ApiClient;
 use crate::bountui::{BountuiApp, UserInputsPath};
+use crate::bountui::widgets::LoginScreen;
 use crate::cross_term::receive_cross_term_events;
 use crate::util::clipboard::{ArboardClipboard, BrokenClipboard, ClipboardAccess};
 use anyhow::Context;
@@ -15,6 +16,7 @@ use log::error;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 fn init_logger() -> anyhow::Result<LoggerHandle> {
     // Initialize logging with flexi_logger
@@ -69,14 +71,35 @@ async fn main() {
     }
     let boundary_client = boundary::CliClient::default();
     let connection_manager = bountui::connection_manager::DefaultConnectionManager::new(boundary_client.clone());
-    let auth_result = match boundary_client.authenticate().await {
+
+    let mut terminal = ratatui::init();
+    terminal.clear().unwrap();
+
+    let auth_handle = tokio::spawn({
+        let client = boundary_client.clone();
+        async move { client.authenticate().await }
+    });
+
+    while !auth_handle.is_finished() {
+        terminal
+            .draw(|frame| {
+                frame.render_widget(LoginScreen, frame.area());
+            })
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let auth_result = match auth_handle.await.unwrap() {
         Ok(res) => res,
         Err(e) => {
+            ratatui::restore();
             error!("Authentication failed: {}", e);
             eprintln!("Error: Authentication failed. Check logs for details.\nReason: {}", e);
             std::process::exit(1);
         }
     };
+
+    ratatui::restore();
 
     //This is safe because this is the only place we set the environment variable
     unsafe { env::set_var("BOUNDARY_TOKEN", auth_result.attributes.token) };

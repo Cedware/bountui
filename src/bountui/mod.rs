@@ -24,7 +24,7 @@ use tokio::select;
 pub mod components;
 pub mod connection_manager;
 mod remember_user_input;
-mod widgets;
+pub mod widgets;
 
 pub enum Message {
     ShowScopes {
