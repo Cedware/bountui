@@ -18,6 +18,7 @@ use ratatui::layout::Constraint;
 use ratatui::Frame;
 pub use remember_user_input::*;
 use std::fmt::Display;
+use std::marker::PhantomData;
 use std::mem;
 use tokio::select;
 
@@ -60,7 +61,7 @@ pub enum Message {
     NavigateToMySessions,
     RunFuture(BoxFuture<'static, ()>),
     Toaster(components::toaster::Message),
-    Authenticated(anyhow::Result<AuthenticateResponse>),
+    Authenticated(AuthenticateResponse),
 }
 
 impl Message {
@@ -73,11 +74,43 @@ impl Message {
 }
 
 pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput> {
-    Login(Option<tokio::task::JoinHandle<anyhow::Result<AuthenticateResponse>>>),
+    Login(LoginPage<B>),
     Scopes(ScopesPage),
     Targets(TargetsPage<B, R>),
     TargetSessions(SessionsPage<LoadTargetSessionsSessions<B>>),
     UserSessions(SessionsPage<LoadUserSessions<B>>),
+}
+
+pub struct LoginPage<C: boundary::ApiClient + Clone + Send + Sync + 'static> {
+    _client: PhantomData<C>,
+}
+
+impl<C> LoginPage<C>
+where
+    C: boundary::ApiClient + Clone + Send + Sync + 'static,
+{
+    fn new(boundary_client: C, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self {
+        tokio::spawn(async move {
+            match boundary_client.authenticate().await {
+                Ok(auth_response) => {
+                    let _ = message_tx.send(Message::Authenticated(auth_response)).await;
+                }
+                Err(e) => {
+                    log::error!("Authentication failed: {e}");
+                    let _ = message_tx
+                        .send(Message::ShowAlert(
+                            "Authentication failed".to_string(),
+                            format!("Authentication failed. Please try again.\nReason: {e}"),
+                        ))
+                        .await;
+                }
+            }
+        });
+
+        Self {
+            _client: PhantomData,
+        }
+    }
 }
 
 pub struct BountuiApp<
@@ -147,40 +180,13 @@ where
         cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
         clipboard: Box<dyn ClipboardAccess>,
     ) -> Self {
-        let auth_handle = tokio::spawn({
-            let client = boundary_client.clone();
-            async move {
-                client
-                    .authenticate()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-            }
-        });
-
-        Self::with_login_handle(
-            boundary_client,
-            connection_manager,
-            remember_user_input,
-            cross_term_event_rx,
-            clipboard,
-            auth_handle,
-        )
-    }
-
-    fn with_login_handle(
-        boundary_client: C,
-        connection_manager: M,
-        remember_user_input: R,
-        cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
-        clipboard: Box<dyn ClipboardAccess>,
-        auth_handle: tokio::task::JoinHandle<anyhow::Result<AuthenticateResponse>>,
-    ) -> Self {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
+        let page = Page::Login(LoginPage::new(boundary_client.clone(), message_tx.clone()));
 
         BountuiApp {
             boundary_client,
             user_id: String::new(),
-            page: Page::Login(Some(auth_handle)),
+            page,
             history: vec![],
             connection_manager,
             alert: None,
@@ -485,21 +491,11 @@ where
             Message::Toaster(toaster_message) => {
                 self.toaster.handle_message(toaster_message).await;
             }
-            Message::Authenticated(result) => match result {
-                Ok(auth_response) => {
-                    unsafe { std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token) };
-                    self.user_id = auth_response.attributes.user_id;
-                    self.navigate_to_scope_tree().await;
-                }
-                Err(e) => {
-                    self.should_exit = true;
-                    log::error!("Authentication failed: {}", e);
-                    eprintln!(
-                        "Error: Authentication failed. Check logs for details.\nReason: {}",
-                        e
-                    );
-                }
-            },
+            Message::Authenticated(auth_response) => {
+                unsafe { std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token) };
+                self.user_id = auth_response.attributes.user_id;
+                self.navigate_to_scope_tree().await;
+            }
         }
     }
 
@@ -516,19 +512,6 @@ where
 
         // Perform initial layout
         self.handle_layout(&mut terminal);
-
-        if let Page::Login(ref mut opt) = &mut self.page {
-            if let Some(handle) = opt.take() {
-                let tx = self.message_tx.clone();
-                self.tasks.push(Box::pin(async move {
-                    let result = match handle.await {
-                        Ok(r) => r,
-                        Err(e) => Err(anyhow::anyhow!("Auth task panicked: {}", e)),
-                    };
-                    let _ = tx.send(Message::Authenticated(result)).await;
-                }));
-            }
-        }
 
         loop {
             terminal
@@ -581,6 +564,85 @@ mod tests {
         boundary::MockClient::builder()
             .scopes(HashMap::new())
             .build()
+    }
+
+    #[derive(Clone)]
+    struct FailingAuthClient;
+
+    impl boundary::ApiClient for FailingAuthClient {
+        type ConnectionHandle = boundary::MockConnectionHandle;
+
+        async fn get_scopes(
+            &self,
+            _parent: Option<&str>,
+            _recursive: bool,
+        ) -> Result<Vec<Scope>, boundary::Error> {
+            Ok(vec![])
+        }
+
+        async fn get_targets(&self, _scope: Option<&str>) -> Result<Vec<Target>, boundary::Error> {
+            Ok(vec![])
+        }
+
+        async fn get_sessions(
+            &self,
+            _scope: &str,
+        ) -> Result<Vec<boundary::Session>, boundary::Error> {
+            Ok(vec![])
+        }
+
+        async fn get_user_sessions(
+            &self,
+            _user_id: &str,
+        ) -> Result<Vec<boundary::Session>, boundary::Error> {
+            Ok(vec![])
+        }
+
+        async fn connect(
+            &self,
+            _target_id: &str,
+            _port: u16,
+        ) -> Result<(boundary::ConnectResponse, Self::ConnectionHandle), boundary::Error> {
+            Err(boundary::Error::ApiError(500, "not used".to_string()))
+        }
+
+        async fn cancel_session(&self, _session_id: &str) -> Result<(), boundary::Error> {
+            Ok(())
+        }
+
+        async fn authenticate(&self) -> Result<AuthenticateResponse, boundary::Error> {
+            Err(boundary::Error::ApiError(401, "denied".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_authentication_keeps_login_page_open_and_shows_alert() {
+        let connection_manager = MockConnectionManager::new();
+        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
+        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
+
+        let mut app = BountuiApp::new(
+            FailingAuthClient,
+            connection_manager,
+            remember_user_input,
+            evt_rx,
+            Box::new(MockClipboardAccess::new()),
+        );
+
+        for _ in 0..10 {
+            app.process_pending_messages().await;
+            if app.alert.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        assert!(matches!(app.page, Page::Login(_)));
+        assert!(app.alert.is_some(), "Expected authentication failure alert");
+        assert!(
+            !app.should_exit,
+            "Authentication failure should not exit the app"
+        );
     }
 
     #[tokio::test]
