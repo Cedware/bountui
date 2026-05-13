@@ -283,7 +283,6 @@ mod test {
     use chrono::{TimeDelta, Utc};
     use std::net::TcpListener;
     use std::ops::Add;
-    use std::os::unix::process::ExitStatusExt;
     use std::sync::Arc;
     use tokio_test::assert_ok;
     use tokio_test::io::Builder;
@@ -453,10 +452,9 @@ mod test {
         use crate::boundary;
         use crate::boundary::client::cli::command_runner::mock::{MockChild, MockCommandRunner};
         use crate::boundary::client::cli::CONNECT_TIMEOUT_MS;
-        use crate::boundary::{ApiClient, CliClient, ConnectResponse};
-        use chrono::{TimeDelta, Utc};
+        use crate::boundary::{ApiClient, CliClient};
         use semver::Version;
-        use std::ops::Add;
+        use std::net::TcpListener;
         use std::sync::Arc;
         use tokio_test::io::Builder;
 
@@ -502,12 +500,6 @@ mod test {
 
         #[tokio::test(start_paused = true)]
         async fn test_connect_should_fail_when_boundary_does_not_connect_in_time() {
-            let expected_response = ConnectResponse {
-                credentials: vec![],
-                session_id: "session_id".to_string(),
-                expiration: Utc::now().add(TimeDelta::seconds(20)),
-            };
-            let response_json = serde_json::to_string(&expected_response).unwrap();
             let std_out = Builder::new()
                 .wait(std::time::Duration::from_millis((CONNECT_TIMEOUT_MS + 1000) as u64)).build();
 
@@ -523,7 +515,11 @@ mod test {
                 cached_version: Arc::new(tokio::sync::OnceCell::new()),
             };
 
-            let result = sut.connect("target_id", 8080).await;
+            let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = tcp_listener.local_addr().unwrap().port();
+            drop(tcp_listener);
+
+            let result = sut.connect("target_id", port).await;
             match result {
                 Ok(_) => panic!("connect should have failed due to timeout, but it succeeded"),
                 Err(boundary::Error::ConnectTimeoutError { .. }) => {},

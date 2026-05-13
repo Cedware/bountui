@@ -1,5 +1,5 @@
 use crate::boundary;
-use crate::boundary::{Scope, Target};
+use crate::boundary::{AuthenticateResponse, Scope, Target};
 use crate::bountui::components::table::scope::{ScopesPage, ScopesPageMessage};
 use crate::bountui::components::table::sessions::{
     LoadTargetSessionsSessions, LoadUserSessions, SessionsPage, SessionsPageMessage,
@@ -60,6 +60,7 @@ pub enum Message {
     NavigateToMySessions,
     RunFuture(BoxFuture<'static, ()>),
     Toaster(components::toaster::Message),
+    Authenticated(anyhow::Result<AuthenticateResponse>),
 }
 
 impl Message {
@@ -72,6 +73,7 @@ impl Message {
 }
 
 pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput> {
+    Login(Option<tokio::task::JoinHandle<anyhow::Result<AuthenticateResponse>>>),
     Scopes(ScopesPage),
     Targets(TargetsPage<B, R>),
     TargetSessions(SessionsPage<LoadTargetSessionsSessions<B>>),
@@ -97,6 +99,7 @@ pub struct BountuiApp<
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
     toaster: components::toaster::Toaster,
+    should_exit: bool,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -105,6 +108,7 @@ where
     C::ConnectionHandle: Send,
     M: ConnectionManager,
 {
+    #[cfg(test)]
     pub async fn new(
         boundary_client: C,
         user_id: String,
@@ -133,6 +137,36 @@ where
             remember_user_input,
             clipboard,
             toaster: components::toaster::Toaster::new(message_tx),
+            should_exit: false,
+        }
+    }
+
+    pub fn with_login(
+        boundary_client: C,
+        connection_manager: M,
+        remember_user_input: R,
+        cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
+        clipboard: Box<dyn ClipboardAccess>,
+        auth_handle: tokio::task::JoinHandle<anyhow::Result<AuthenticateResponse>>,
+    ) -> Self {
+        let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
+
+        BountuiApp {
+            boundary_client,
+            user_id: String::new(),
+            page: Page::Login(Some(auth_handle)),
+            history: vec![],
+            connection_manager,
+            alert: None,
+            message_tx: message_tx.clone(),
+            message_rx,
+            cross_term_event_rx,
+            navigation_input: None,
+            tasks: FuturesUnordered::new(),
+            remember_user_input,
+            clipboard,
+            toaster: components::toaster::Toaster::new(message_tx),
+            should_exit: false,
         }
     }
 
@@ -272,6 +306,9 @@ where
         }
 
         match &self.page {
+            Page::Login(_) => {
+                frame.render_widget(widgets::LoginScreen, content_area);
+            }
             Page::Scopes(scopes_page) => {
                 scopes_page.view(frame, content_area);
             }
@@ -318,12 +355,17 @@ where
         }
 
         match &mut self.page {
+            Page::Login(_) => {}
             Page::Scopes(scopes_page) => {
                 scopes_page.handle_event(event).await;
             }
             Page::Targets(targets_page) => targets_page.handle_event(event).await,
-            Page::TargetSessions(sessions_page) => sessions_page.handle_event(event).await,
-            Page::UserSessions(sessions_page) => sessions_page.handle_event(event).await,
+            Page::TargetSessions(sessions_page) => {
+                sessions_page.handle_event(event).await;
+            }
+            Page::UserSessions(sessions_page) => {
+                sessions_page.handle_event(event).await;
+            }
         }
     }
 
@@ -413,6 +455,20 @@ where
             Message::Toaster(toaster_message) => {
                 self.toaster.handle_message(toaster_message).await;
             }
+            Message::Authenticated(result) => {
+                match result {
+                    Ok(auth_response) => {
+                        unsafe { std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token) };
+                        self.user_id = auth_response.attributes.user_id;
+                        self.navigate_to_scope_tree().await;
+                    }
+                    Err(e) => {
+                        self.should_exit = true;
+                        log::error!("Authentication failed: {}", e);
+                        eprintln!("Error: Authentication failed. Check logs for details.\nReason: {}", e);
+                    }
+                }
+            }
         }
     }
 
@@ -429,6 +485,19 @@ where
 
         // Perform initial layout
         self.handle_layout(&mut terminal);
+
+        if let Page::Login(ref mut opt) = &mut self.page {
+            if let Some(handle) = opt.take() {
+                let tx = self.message_tx.clone();
+                self.tasks.push(Box::pin(async move {
+                    let result = match handle.await {
+                        Ok(r) => r,
+                        Err(e) => Err(anyhow::anyhow!("Auth task panicked: {}", e)),
+                    };
+                    let _ = tx.send(Message::Authenticated(result)).await;
+                }));
+            }
+        }
 
         loop {
             terminal
@@ -459,6 +528,9 @@ where
                     }
                 },
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {}
+            }
+            if self.should_exit {
+                break;
             }
         }
 

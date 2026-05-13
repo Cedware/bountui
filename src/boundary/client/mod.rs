@@ -1,5 +1,5 @@
 pub mod cli;
-mod response;
+pub mod response;
 #[cfg(test)]
 pub mod mock;
 
