@@ -1,11 +1,9 @@
-
 mod boundary;
 mod bountui;
+mod cross_term;
 pub mod event_ext;
 mod util;
-mod cross_term;
 
-use crate::boundary::ApiClient;
 use crate::bountui::{BountuiApp, UserInputsPath};
 use crate::cross_term::receive_cross_term_events;
 use crate::util::clipboard::{ArboardClipboard, BrokenClipboard, ClipboardAccess};
@@ -68,14 +66,8 @@ async fn main() {
         std::process::exit(1);
     }
     let boundary_client = boundary::CliClient::default();
-    let connection_manager = bountui::connection_manager::DefaultConnectionManager::new(boundary_client.clone());
-
-    let auth_handle = tokio::spawn({
-        let client = boundary_client.clone();
-        async move {
-            client.authenticate().await.map_err(|e| anyhow::anyhow!("{e}"))
-        }
-    });
+    let connection_manager =
+        bountui::connection_manager::DefaultConnectionManager::new(boundary_client.clone());
 
     let user_inputs_path_buf = home::home_dir().map(|mut path| {
         path.push(".bountui");
@@ -93,18 +85,20 @@ async fn main() {
     let clipboard: Box<dyn ClipboardAccess> = match ArboardClipboard::new() {
         Ok(c) => Box::new(c),
         Err(e) => {
-            error!("Failed to initialize clipboard: {}. Using BrokenArboardClipboard fallback.", e);
+            error!(
+                "Failed to initialize clipboard: {}. Using BrokenArboardClipboard fallback.",
+                e
+            );
             Box::new(BrokenClipboard::new(e))
         }
     };
 
-    let mut app = BountuiApp::with_login(
+    let mut app = BountuiApp::new(
         boundary_client,
         connection_manager,
         user_inputs_path,
         cross_term_event_rx,
         clipboard,
-        auth_handle,
     );
     let _ = app.run().await;
 }

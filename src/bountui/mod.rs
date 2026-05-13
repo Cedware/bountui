@@ -109,15 +109,14 @@ where
     M: ConnectionManager,
 {
     #[cfg(test)]
-    pub async fn new(
+    pub async fn new_authenticated_for_test(
         boundary_client: C,
         user_id: String,
         connection_manager: M,
         remember_user_input: R,
         cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
         clipboard: Box<dyn ClipboardAccess>,
-    ) -> Self
-    {
+    ) -> Self {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
         let page =
             Page::Scopes(ScopesPage::new(None, message_tx.clone(), boundary_client.clone()).await);
@@ -141,7 +140,34 @@ where
         }
     }
 
-    pub fn with_login(
+    pub fn new(
+        boundary_client: C,
+        connection_manager: M,
+        remember_user_input: R,
+        cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
+        clipboard: Box<dyn ClipboardAccess>,
+    ) -> Self {
+        let auth_handle = tokio::spawn({
+            let client = boundary_client.clone();
+            async move {
+                client
+                    .authenticate()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }
+        });
+
+        Self::with_login_handle(
+            boundary_client,
+            connection_manager,
+            remember_user_input,
+            cross_term_event_rx,
+            clipboard,
+            auth_handle,
+        )
+    }
+
+    fn with_login_handle(
         boundary_client: C,
         connection_manager: M,
         remember_user_input: R,
@@ -179,10 +205,12 @@ where
         }
     }
 
-    async fn stop_session(&mut self, session_id: &str){
+    async fn stop_session(&mut self, session_id: &str) {
         if let Err(e) = self.connection_manager.stop(session_id).await {
             error!("Failed to stop session: {:?}", e);
-            self.message_tx.send(Message::show_error("Failed to stop session", e)).await
+            self.message_tx
+                .send(Message::show_error("Failed to stop session", e))
+                .await
                 .expect("Failed to send stop session error message");
         }
     }
@@ -195,7 +223,7 @@ where
                     self.message_tx.clone(),
                     self.boundary_client.clone(),
                 )
-                    .await,
+                .await,
             ),
             false,
         );
@@ -210,7 +238,7 @@ where
                     self.boundary_client.clone(),
                     self.remember_user_input,
                 )
-                    .await,
+                .await,
             ),
             false,
         );
@@ -241,7 +269,7 @@ where
                     self.message_tx.clone(),
                     credentials,
                 )
-                    .await,
+                .await,
             ),
             true,
         );
@@ -389,7 +417,7 @@ where
                             self.message_tx.clone(),
                             credentials,
                         )
-                            .await,
+                        .await,
                     ),
                     false,
                 );
@@ -433,42 +461,45 @@ where
                     scopes_page.handle_message(scopes_message).await;
                 }
             }
-            Message::SetClipboard { text, on_success, on_error } => {
-                match self.clipboard.set_text(text) {
-                    Ok(_) => {
-                        if let Some(success_msg) = on_success {
-                            let _ = self.message_tx.send(*success_msg).await;
-                        }
-                    }
-                    Err(e) => {
-                        if let Some(error_msg) = on_error {
-                            let _ = self.message_tx.send(*error_msg).await;
-                        } else {
-                            self.alert = Some((
-                                "Clipboard Error".to_string(),
-                                format!("Failed to set clipboard text: {e}"),
-                            ));
-                        }
+            Message::SetClipboard {
+                text,
+                on_success,
+                on_error,
+            } => match self.clipboard.set_text(text) {
+                Ok(_) => {
+                    if let Some(success_msg) = on_success {
+                        let _ = self.message_tx.send(*success_msg).await;
                     }
                 }
-            }
+                Err(e) => {
+                    if let Some(error_msg) = on_error {
+                        let _ = self.message_tx.send(*error_msg).await;
+                    } else {
+                        self.alert = Some((
+                            "Clipboard Error".to_string(),
+                            format!("Failed to set clipboard text: {e}"),
+                        ));
+                    }
+                }
+            },
             Message::Toaster(toaster_message) => {
                 self.toaster.handle_message(toaster_message).await;
             }
-            Message::Authenticated(result) => {
-                match result {
-                    Ok(auth_response) => {
-                        unsafe { std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token) };
-                        self.user_id = auth_response.attributes.user_id;
-                        self.navigate_to_scope_tree().await;
-                    }
-                    Err(e) => {
-                        self.should_exit = true;
-                        log::error!("Authentication failed: {}", e);
-                        eprintln!("Error: Authentication failed. Check logs for details.\nReason: {}", e);
-                    }
+            Message::Authenticated(result) => match result {
+                Ok(auth_response) => {
+                    unsafe { std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token) };
+                    self.user_id = auth_response.attributes.user_id;
+                    self.navigate_to_scope_tree().await;
                 }
-            }
+                Err(e) => {
+                    self.should_exit = true;
+                    log::error!("Authentication failed: {}", e);
+                    eprintln!(
+                        "Error: Authentication failed. Check logs for details.\nReason: {}",
+                        e
+                    );
+                }
+            },
         }
     }
 
@@ -538,8 +569,6 @@ where
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,22 +595,27 @@ mod tests {
         let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
-        let mut app = BountuiApp::new(
+        let mut app = BountuiApp::new_authenticated_for_test(
             make_boundary_client(),
             "user-1".to_string(),
             connection_manager,
             remember_user_input,
             evt_rx,
             Box::new(mock_clip),
-        ).await;
+        )
+        .await;
 
         app.handle_message(Message::SetClipboard {
             text: "hello".to_string(),
             on_success: None,
             on_error: None,
-        }).await;
+        })
+        .await;
 
-        assert!(app.alert.is_none(), "Alert should not be set on clipboard success");
+        assert!(
+            app.alert.is_none(),
+            "Alert should not be set on clipboard success"
+        );
     }
 
     #[tokio::test]
@@ -596,20 +630,22 @@ mod tests {
         let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
-        let mut app = BountuiApp::new(
+        let mut app = BountuiApp::new_authenticated_for_test(
             make_boundary_client(),
             "user-1".to_string(),
             connection_manager,
             remember_user_input,
             evt_rx,
             Box::new(mock_clip),
-        ).await;
+        )
+        .await;
 
         app.handle_message(Message::SetClipboard {
             text: "oops".to_string(),
             on_success: None,
             on_error: None,
-        }).await;
+        })
+        .await;
 
         match &app.alert {
             Some((title, _msg)) => {
@@ -627,20 +663,25 @@ mod tests {
         let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
-        let mut app = BountuiApp::new(
+        let mut app = BountuiApp::new_authenticated_for_test(
             make_boundary_client(),
             "user-1".to_string(),
             connection_manager,
             remember_user_input,
             evt_rx,
             Box::new(MockClipboardAccess::new()),
-        ).await;
+        )
+        .await;
 
         app.handle_message(Message::Connect {
             target_id: "TARGET_DOES_NOT_EXIST".to_string(),
             port: 8080,
-        }).await;
+        })
+        .await;
         app.process_pending_messages().await;
-        assert!(app.alert.is_some(), "Expected error alert on connect failure");
+        assert!(
+            app.alert.is_some(),
+            "Expected error alert on connect failure"
+        );
     }
 }
