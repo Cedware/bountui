@@ -7,6 +7,7 @@ use crate::bountui::components::table::sessions::{
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::ConnectionManager;
+use crate::bountui::login_page::LoginPage;
 use crate::event_ext::EventExt;
 use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
@@ -18,14 +19,14 @@ use ratatui::layout::Constraint;
 use ratatui::Frame;
 pub use remember_user_input::*;
 use std::fmt::Display;
-use std::marker::PhantomData;
 use std::mem;
 use tokio::select;
 
 pub mod components;
 pub mod connection_manager;
+mod login_page;
 mod remember_user_input;
-pub mod widgets;
+mod widgets;
 
 pub enum Message {
     ShowScopes {
@@ -81,38 +82,6 @@ pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: Remembe
     UserSessions(SessionsPage<LoadUserSessions<B>>),
 }
 
-pub struct LoginPage<C: boundary::ApiClient + Clone + Send + Sync + 'static> {
-    _client: PhantomData<C>,
-}
-
-impl<C> LoginPage<C>
-where
-    C: boundary::ApiClient + Clone + Send + Sync + 'static,
-{
-    fn new(boundary_client: C, message_tx: tokio::sync::mpsc::Sender<Message>) -> Self {
-        tokio::spawn(async move {
-            match boundary_client.authenticate().await {
-                Ok(auth_response) => {
-                    let _ = message_tx.send(Message::Authenticated(auth_response)).await;
-                }
-                Err(e) => {
-                    log::error!("Authentication failed: {e}");
-                    let _ = message_tx
-                        .send(Message::ShowAlert(
-                            "Authentication failed".to_string(),
-                            format!("Authentication failed. Please try again.\nReason: {e}"),
-                        ))
-                        .await;
-                }
-            }
-        });
-
-        Self {
-            _client: PhantomData,
-        }
-    }
-}
-
 pub struct BountuiApp<
     C: boundary::ApiClient + Clone + Send + Sync + 'static,
     R: RememberUserInput + Copy,
@@ -132,7 +101,6 @@ pub struct BountuiApp<
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
     toaster: components::toaster::Toaster,
-    should_exit: bool,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -141,38 +109,6 @@ where
     C::ConnectionHandle: Send,
     M: ConnectionManager,
 {
-    #[cfg(test)]
-    pub async fn new_authenticated_for_test(
-        boundary_client: C,
-        user_id: String,
-        connection_manager: M,
-        remember_user_input: R,
-        cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
-        clipboard: Box<dyn ClipboardAccess>,
-    ) -> Self {
-        let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
-        let page =
-            Page::Scopes(ScopesPage::new(None, message_tx.clone(), boundary_client.clone()).await);
-
-        BountuiApp {
-            boundary_client,
-            user_id,
-            page,
-            history: vec![],
-            connection_manager,
-            alert: None,
-            message_tx: message_tx.clone(),
-            message_rx,
-            cross_term_event_rx,
-            navigation_input: None,
-            tasks: FuturesUnordered::new(),
-            remember_user_input,
-            clipboard,
-            toaster: components::toaster::Toaster::new(message_tx),
-            should_exit: false,
-        }
-    }
-
     pub fn new(
         boundary_client: C,
         connection_manager: M,
@@ -198,7 +134,6 @@ where
             remember_user_input,
             clipboard,
             toaster: components::toaster::Toaster::new(message_tx),
-            should_exit: false,
         }
     }
 
@@ -543,9 +478,6 @@ where
                 },
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {}
             }
-            if self.should_exit {
-                break;
-            }
         }
 
         ratatui::restore()
@@ -562,57 +494,35 @@ mod tests {
 
     fn make_boundary_client() -> boundary::MockClient {
         boundary::MockClient::builder()
+            .user_id("user-1".to_string())
             .scopes(HashMap::new())
             .build()
     }
 
-    #[derive(Clone)]
-    struct FailingAuthClient;
+    async fn make_authenticated_app<M: ConnectionManager>(
+        connection_manager: M,
+        clipboard: Box<dyn ClipboardAccess>,
+    ) -> BountuiApp<boundary::MockClient, Option<UserInputsPath<&'static str>>, M> {
+        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
+        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
-    impl boundary::ApiClient for FailingAuthClient {
-        type ConnectionHandle = boundary::MockConnectionHandle;
+        let mut app = BountuiApp::new(
+            make_boundary_client(),
+            connection_manager,
+            remember_user_input,
+            evt_rx,
+            clipboard,
+        );
 
-        async fn get_scopes(
-            &self,
-            _parent: Option<&str>,
-            _recursive: bool,
-        ) -> Result<Vec<Scope>, boundary::Error> {
-            Ok(vec![])
+        for _ in 0..10 {
+            app.process_pending_messages().await;
+            if matches!(app.page, Page::Scopes(_)) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
-        async fn get_targets(&self, _scope: Option<&str>) -> Result<Vec<Target>, boundary::Error> {
-            Ok(vec![])
-        }
-
-        async fn get_sessions(
-            &self,
-            _scope: &str,
-        ) -> Result<Vec<boundary::Session>, boundary::Error> {
-            Ok(vec![])
-        }
-
-        async fn get_user_sessions(
-            &self,
-            _user_id: &str,
-        ) -> Result<Vec<boundary::Session>, boundary::Error> {
-            Ok(vec![])
-        }
-
-        async fn connect(
-            &self,
-            _target_id: &str,
-            _port: u16,
-        ) -> Result<(boundary::ConnectResponse, Self::ConnectionHandle), boundary::Error> {
-            Err(boundary::Error::ApiError(500, "not used".to_string()))
-        }
-
-        async fn cancel_session(&self, _session_id: &str) -> Result<(), boundary::Error> {
-            Ok(())
-        }
-
-        async fn authenticate(&self) -> Result<AuthenticateResponse, boundary::Error> {
-            Err(boundary::Error::ApiError(401, "denied".to_string()))
-        }
+        app
     }
 
     #[tokio::test]
@@ -622,7 +532,11 @@ mod tests {
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
         let mut app = BountuiApp::new(
-            FailingAuthClient,
+            boundary::MockClient::builder()
+                .user_id("user-1".to_string())
+                .authenticate_should_fail(true)
+                .scopes(HashMap::new())
+                .build(),
             connection_manager,
             remember_user_input,
             evt_rx,
@@ -639,10 +553,6 @@ mod tests {
 
         assert!(matches!(app.page, Page::Login(_)));
         assert!(app.alert.is_some(), "Expected authentication failure alert");
-        assert!(
-            !app.should_exit,
-            "Authentication failure should not exit the app"
-        );
     }
 
     #[tokio::test]
@@ -654,18 +564,7 @@ mod tests {
             .returning(|_| Ok(()));
 
         let connection_manager = MockConnectionManager::new();
-        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
-        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
-
-        let mut app = BountuiApp::new_authenticated_for_test(
-            make_boundary_client(),
-            "user-1".to_string(),
-            connection_manager,
-            remember_user_input,
-            evt_rx,
-            Box::new(mock_clip),
-        )
-        .await;
+        let mut app = make_authenticated_app(connection_manager, Box::new(mock_clip)).await;
 
         app.handle_message(Message::SetClipboard {
             text: "hello".to_string(),
@@ -689,18 +588,7 @@ mod tests {
             .returning(|_| Err(ClipboardAccessError::Unknown("boom".to_string())));
 
         let connection_manager = MockConnectionManager::new();
-        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
-        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
-
-        let mut app = BountuiApp::new_authenticated_for_test(
-            make_boundary_client(),
-            "user-1".to_string(),
-            connection_manager,
-            remember_user_input,
-            evt_rx,
-            Box::new(mock_clip),
-        )
-        .await;
+        let mut app = make_authenticated_app(connection_manager, Box::new(mock_clip)).await;
 
         app.handle_message(Message::SetClipboard {
             text: "oops".to_string(),
@@ -722,25 +610,21 @@ mod tests {
         let boundary_client = make_boundary_client();
         let connection_manager = DefaultConnectionManager::new(boundary_client);
 
-        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
-        let remember_user_input: Option<UserInputsPath<&'static str>> = None;
-
-        let mut app = BountuiApp::new_authenticated_for_test(
-            make_boundary_client(),
-            "user-1".to_string(),
-            connection_manager,
-            remember_user_input,
-            evt_rx,
-            Box::new(MockClipboardAccess::new()),
-        )
-        .await;
+        let mut app =
+            make_authenticated_app(connection_manager, Box::new(MockClipboardAccess::new())).await;
 
         app.handle_message(Message::Connect {
             target_id: "TARGET_DOES_NOT_EXIST".to_string(),
             port: 8080,
         })
         .await;
-        app.process_pending_messages().await;
+        for _ in 0..10 {
+            app.process_pending_messages().await;
+            if !matches!(app.page, Page::Login(_)) || app.alert.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         assert!(
             app.alert.is_some(),
             "Expected error alert on connect failure"
