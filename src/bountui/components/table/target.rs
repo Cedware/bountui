@@ -4,7 +4,7 @@ use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
-use crate::bountui::components::{ConnectionEstablishedDialog, TablePage};
+use crate::bountui::components::{ConnectionEstablishedDialog, TablePage, TargetDetailDialog};
 use crate::bountui::remember_user_input::RememberUserInput;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
@@ -43,6 +43,7 @@ pub struct TargetsPage<C, S: RememberUserInput> {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result_dialog: Option<ConnectionEstablishedDialog>,
+    detail_dialog: Option<TargetDetailDialog>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     boundary_client: C,
     parent_scope: Scope,
@@ -117,6 +118,7 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             table_page,
             connect_dialog: None,
             connect_result_dialog: None,
+            detail_dialog: None,
             message_tx,
             parent_scope,
             boundary_client,
@@ -166,6 +168,9 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
         }
         if let Some(connect_result_dialog) = &self.connect_result_dialog {
             connect_result_dialog.view(frame);
+        }
+        if let Some(detail_dialog) = &self.detail_dialog {
+            detail_dialog.view(frame);
         }
     }
 
@@ -259,7 +264,17 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
-        // 1. Handle ConnectionEstablishedDialog FIRST if it's open
+        // 0. Handle TargetDetailDialog FIRST if it's open
+        if let Some(detail_dialog) = &mut self.detail_dialog {
+            if event.is_esc() {
+                self.detail_dialog = None;
+                return;
+            }
+            detail_dialog.handle_event(event).await;
+            return;
+        }
+
+        // 1. Handle ConnectionEstablishedDialog if it's open
         if let Some(dialog) = &mut self.connect_result_dialog {
             if event.is_esc() {
                 self.close_connect_result_dialog();
@@ -313,6 +328,15 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
                     // Show sessions for the selected target if possible
                     if self.table_page.selected_item().is_some() {
                         self.show_sessions().await;
+                    }
+                }
+                KeyCode::Char('d') => {
+                    // Show target detail overlay if a target is selected
+                    if let Some(target) = self.table_page.selected_item() {
+                        self.detail_dialog = Some(TargetDetailDialog::new(
+                            &target,
+                            self.message_tx.clone(),
+                        ));
                     }
                 }
                 KeyCode::Esc => {
