@@ -4,7 +4,7 @@ use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
-use crate::bountui::components::{ConnectionEstablishedDialog, TablePage};
+use crate::bountui::components::{ConnectionEstablishedDialog, TablePage, TargetDetailsOverlay};
 use crate::bountui::remember_user_input::RememberUserInput;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
@@ -43,6 +43,7 @@ pub struct TargetsPage<C, S: RememberUserInput> {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result_dialog: Option<ConnectionEstablishedDialog>,
+    target_details_overlay: Option<TargetDetailsOverlay>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     boundary_client: C,
     parent_scope: Scope,
@@ -103,6 +104,11 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
                 "c".to_string(),
                 Box::new(|item: Option<&Target>| item.map_or(false, |t| t.can_connect())),
             ),
+            Action::new(
+                "Details".to_string(),
+                "d".to_string(),
+                Box::new(|item: Option<&Target>| item.is_some()),
+            ),
         ];
 
         let table_page = TablePage::new(
@@ -117,6 +123,7 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             table_page,
             connect_dialog: None,
             connect_result_dialog: None,
+            target_details_overlay: None,
             message_tx,
             parent_scope,
             boundary_client,
@@ -166,6 +173,9 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
         }
         if let Some(connect_result_dialog) = &self.connect_result_dialog {
             connect_result_dialog.view(frame);
+        }
+        if let Some(overlay) = &self.target_details_overlay {
+            overlay.view(frame);
         }
     }
 
@@ -270,6 +280,15 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             return; // Consume the event, don't let TargetsPage handle it further
         }
 
+        // 1b. Handle TargetDetailsOverlay if open
+        if let Some(overlay) = &mut self.target_details_overlay {
+            let should_close = overlay.handle_event(event);
+            if should_close {
+                self.target_details_overlay = None;
+            }
+            return; // Consume all events while overlay is open
+        }
+
         // 2. Handle ConnectDialog if it's open
         if let Some(connect_dialog) = &mut self.connect_dialog {
             if event.is_esc() {
@@ -318,6 +337,13 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
                 KeyCode::Esc => {
                     // Go back only if no dialogs are open
                     self.message_tx.send_or_expect(GoBack).await;
+                }
+                KeyCode::Char('d') => {
+                    // Open target details overlay for selected target
+                    if let Some(target) = self.table_page.selected_item() {
+                        self.target_details_overlay =
+                            Some(TargetDetailsOverlay::new((*target).clone()));
+                    }
                 }
                 _ => {}
             }
@@ -408,5 +434,35 @@ mod test {
         assert!(sut.connect_dialog.is_some(), "Connect dialog should be open");
         sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc))).await; // Press Esc to close
         assert!(sut.connect_dialog.is_none(), "Connect dialog should be closed after pressing Esc");
+    }
+
+    #[tokio::test]
+    async fn test_target_details_overlay_open_close() {
+        let (msg_tx, _msg_rx) = tokio::sync::mpsc::channel(10);
+        let client = create_boundary_client();
+        let remember_user_input = MockRememberUserInput::default();
+        let mut sut = TargetsPage::new(create_parent_scope(), msg_tx, Arc::new(client), remember_user_input).await;
+        sut.handle_message(TargetsPageMessage::TargetsLoaded(create_targets()));
+        // Open overlay with 'd'
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('d')))).await;
+        assert!(sut.target_details_overlay.is_some(), "Target details overlay should be open");
+        // Close with ESC
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc))).await;
+        assert!(sut.target_details_overlay.is_none(), "Target details overlay should be closed after pressing Esc");
+    }
+
+    #[tokio::test]
+    async fn test_target_details_overlay_toggle_with_d() {
+        let (msg_tx, _msg_rx) = tokio::sync::mpsc::channel(10);
+        let client = create_boundary_client();
+        let remember_user_input = MockRememberUserInput::default();
+        let mut sut = TargetsPage::new(create_parent_scope(), msg_tx, Arc::new(client), remember_user_input).await;
+        sut.handle_message(TargetsPageMessage::TargetsLoaded(create_targets()));
+        // Open overlay with 'd'
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('d')))).await;
+        assert!(sut.target_details_overlay.is_some(), "Overlay should open on 'd'");
+        // Close with 'd' (toggle behavior)
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('d')))).await;
+        assert!(sut.target_details_overlay.is_none(), "Overlay should close on second 'd'");
     }
 }
