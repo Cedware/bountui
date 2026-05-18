@@ -1,7 +1,7 @@
 pub mod cli;
-mod response;
 #[cfg(test)]
 pub mod mock;
+pub mod response;
 
 use crate::boundary::client::response::AuthenticateResponse;
 use crate::boundary::error::Error;
@@ -19,22 +19,22 @@ pub trait ApiClient {
         &self,
         parent: Option<&'a str>,
         recursive: bool,
-    ) -> impl Future<Output=Result<Vec<Scope>, Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<Scope>, Error>> + Send;
     fn get_targets<'a>(
         &self,
         scope: Option<&'a str>,
-    ) -> impl Future<Output=Result<Vec<Target>, Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<Target>, Error>> + Send;
 
     fn get_sessions(
         &self,
         scope: &str,
-    ) -> impl Future<Output=Result<Vec<Session>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync;
 
     #[warn(dead_code)]
     fn get_user_sessions(
         &self,
         user_id: &str,
-    ) -> impl Future<Output=Result<Vec<Session>, Error>> + Send + Sync;
+    ) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync;
 
     async fn connect(
         &self,
@@ -44,7 +44,7 @@ pub trait ApiClient {
 
     async fn cancel_session(&self, session_id: &str) -> Result<(), Error>;
 
-    async fn authenticate(&self) -> Result<AuthenticateResponse, Error>;
+    fn authenticate(&self) -> impl Future<Output = Result<AuthenticateResponse, Error>> + Send;
 }
 
 pub trait ApiClientExt: ApiClient + Sync {
@@ -65,7 +65,7 @@ pub trait ApiClientExt: ApiClient + Sync {
     fn get_sessions_with_target(
         &self,
         scope: &str,
-    ) -> impl Future<Output=Result<Vec<SessionWithTarget>, Error>> + Send {
+    ) -> impl Future<Output = Result<Vec<SessionWithTarget>, Error>> + Send {
         async {
             let targets = self.get_targets(Some(scope)).await?;
             let sessions = self.get_sessions(scope).await?;
@@ -76,7 +76,7 @@ pub trait ApiClientExt: ApiClient + Sync {
     fn get_user_sessions_with_target(
         &self,
         user_id: &str,
-    ) -> impl Future<Output=Result<Vec<SessionWithTarget>, Error>> + Send {
+    ) -> impl Future<Output = Result<Vec<SessionWithTarget>, Error>> + Send {
         async {
             let targets = self.get_targets(None).await?;
             let user_sessions = self.get_user_sessions(user_id).await?;
@@ -90,8 +90,8 @@ impl<T: ApiClient + Sync> ApiClientExt for T {}
 pub trait BoundaryConnectionHandle: Send {
     type Error: Display + Debug + Send;
 
-    fn wait(&mut self) -> impl Future<Output=Result<(), Self::Error>> + Send;
-    fn stop(&mut self) -> impl Future<Output=Result<(), Self::Error>> + Send;
+    fn wait(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    fn stop(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 impl<T> BoundaryConnectionHandle for Arc<Mutex<T>>
@@ -109,28 +109,43 @@ where
     }
 }
 
-
 impl<T: ApiClient> ApiClient for Arc<T> {
-
     type ConnectionHandle = T::ConnectionHandle;
 
-    fn get_scopes(&self, parent: Option<&str>, recursive: bool) -> impl Future<Output=Result<Vec<Scope>, Error>> + Send {
+    fn get_scopes(
+        &self,
+        parent: Option<&str>,
+        recursive: bool,
+    ) -> impl Future<Output = Result<Vec<Scope>, Error>> + Send {
         T::get_scopes(self, parent, recursive)
     }
 
-    fn get_targets(&self, scope: Option<&str>) -> impl Future<Output=Result<Vec<Target>, Error>> + Send {
+    fn get_targets(
+        &self,
+        scope: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<Target>, Error>> + Send {
         T::get_targets(self, scope)
     }
 
-    fn get_sessions(&self, scope: &str) -> impl Future<Output=Result<Vec<Session>, Error>> + Send + Sync {
+    fn get_sessions(
+        &self,
+        scope: &str,
+    ) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync {
         T::get_sessions(self, scope)
     }
 
-    fn get_user_sessions(&self, user_id: &str) -> impl Future<Output=Result<Vec<Session>, Error>> + Send + Sync {
+    fn get_user_sessions(
+        &self,
+        user_id: &str,
+    ) -> impl Future<Output = Result<Vec<Session>, Error>> + Send + Sync {
         T::get_user_sessions(self, user_id)
     }
 
-    async fn connect(&self, target_id: &str, port: u16) -> Result<(ConnectResponse, Self::ConnectionHandle), Error> {
+    async fn connect(
+        &self,
+        target_id: &str,
+        port: u16,
+    ) -> Result<(ConnectResponse, Self::ConnectionHandle), Error> {
         T::connect(self, target_id, port).await
     }
 
@@ -138,7 +153,7 @@ impl<T: ApiClient> ApiClient for Arc<T> {
         T::cancel_session(self, session_id).await
     }
 
-    async fn authenticate(&self) -> Result<AuthenticateResponse, Error> {
-        T::authenticate(self).await
+    fn authenticate(&self) -> impl Future<Output = Result<AuthenticateResponse, Error>> + Send {
+        T::authenticate(self)
     }
 }
