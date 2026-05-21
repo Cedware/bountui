@@ -80,6 +80,12 @@ async fn main() {
         None
     };
 
+    let auth_token_cache_path = home::home_dir().map(|mut path| {
+        path.push(".bountui");
+        path.push("auth_token.json");
+        path
+    });
+
     let cross_term_event_rx = receive_cross_term_events();
 
     let clipboard: Box<dyn ClipboardAccess> = match ArboardClipboard::new() {
@@ -99,6 +105,7 @@ async fn main() {
         user_inputs_path,
         cross_term_event_rx,
         clipboard,
+        auth_token_cache_path,
     );
     let _ = app.run().await;
 }

@@ -16,10 +16,12 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use log::error;
 use ratatui::layout::Constraint;
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 pub use remember_user_input::*;
 use std::fmt::Display;
 use std::mem;
+use std::path::PathBuf;
 use tokio::select;
 
 pub mod components;
@@ -27,6 +29,7 @@ pub mod connection_manager;
 mod login_page;
 mod remember_user_input;
 mod widgets;
+mod auth_cache;
 
 pub enum Message {
     ShowScopes {
@@ -63,6 +66,13 @@ pub enum Message {
     RunFuture(BoxFuture<'static, ()>),
     Toaster(components::toaster::Message),
     Authenticated(AuthenticateResponse),
+    /// Cached auth token was validated successfully on startup.
+    AuthCacheOk {
+        user_id: String,
+        token: String,
+    },
+    /// Navigate to the login page (e.g. when cached token is invalid or session expired).
+    ShowLogin,
 }
 
 impl Message {
@@ -75,6 +85,7 @@ impl Message {
 }
 
 pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput> {
+    CheckingAuth,
     Login(LoginPage<B>),
     Scopes(ScopesPage),
     Targets(TargetsPage<B, R>),
@@ -101,6 +112,55 @@ pub struct BountuiApp<
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
     toaster: components::toaster::Toaster,
+    auth_cache_path: Option<PathBuf>,
+}
+
+/// Attempts to use a cached auth token instead of showing the login page.
+/// Loads the token from disk, tests it with a scope listing, and sends the
+/// appropriate message back to the app.
+async fn check_cached_auth_token<C: boundary::ApiClient + Clone + Send + Sync + 'static>(
+    cache_path: &std::path::Path,
+    client: C,
+    tx: tokio::sync::mpsc::Sender<Message>,
+) {
+    let cached = match auth_cache::load_auth_token(cache_path) {
+        Ok(Some((token, user_id))) => (token, user_id),
+        Ok(None) => {
+            // No cached token — show login page.
+            let _ = tx.send(Message::ShowLogin).await;
+            return;
+        }
+        Err(e) => {
+            log::error!("Failed to load cached auth token: {e}");
+            let _ = tx.send(Message::ShowLogin).await;
+            return;
+        }
+    };
+
+    let (token, user_id) = cached;
+
+    // Set the token in the environment so the boundary CLI can use it.
+    unsafe { std::env::set_var("BOUNDARY_TOKEN", &token) };
+
+    // Probe: make a lightweight API call to verify the token is still valid.
+    match client.get_scopes(None, false).await {
+        Ok(_) => {
+            log::info!("Cached auth token is valid — skipping login");
+            let _ = tx
+                .send(Message::AuthCacheOk { user_id, token })
+                .await;
+        }
+        Err(e) => {
+            // Token is invalid or expired — clear cache and show login.
+            log::info!(
+                "Cached auth token rejected ({}), clearing cache and showing login",
+                e
+            );
+            let _ = auth_cache::clear_auth_token(cache_path);
+            unsafe { std::env::remove_var("BOUNDARY_TOKEN") };
+            let _ = tx.send(Message::ShowLogin).await;
+        }
+    }
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
@@ -115,9 +175,25 @@ where
         remember_user_input: R,
         cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
         clipboard: Box<dyn ClipboardAccess>,
+        auth_cache_path: Option<PathBuf>,
     ) -> Self {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
-        let page = Page::Login(LoginPage::new(boundary_client.clone(), message_tx.clone()));
+
+        // If we have an auth cache path, try to use the cached token on startup.
+        // Otherwise go straight to login.
+        let page = match &auth_cache_path {
+            Some(_) => Page::CheckingAuth,
+            None => Page::Login(LoginPage::new(boundary_client.clone(), message_tx.clone())),
+        };
+
+        // Spawn the auth cache check (or skip straight to login if no cache path).
+        if let Some(cache_path) = auth_cache_path.clone() {
+            let client = boundary_client.clone();
+            let tx = message_tx.clone();
+            tokio::spawn(async move {
+                check_cached_auth_token(&cache_path, client, tx).await;
+            });
+        }
 
         BountuiApp {
             boundary_client,
@@ -134,6 +210,7 @@ where
             remember_user_input,
             clipboard,
             toaster: components::toaster::Toaster::new(message_tx),
+            auth_cache_path,
         }
     }
 
@@ -275,6 +352,13 @@ where
         }
 
         match &self.page {
+            Page::CheckingAuth => {
+                frame.render_widget(
+                    Paragraph::new("Checking saved session…")
+                        .alignment(ratatui::layout::Alignment::Center),
+                    content_area,
+                );
+            }
             Page::Login(_) => {
                 frame.render_widget(widgets::LoginScreen, content_area);
             }
@@ -324,6 +408,7 @@ where
         }
 
         match &mut self.page {
+            Page::CheckingAuth => {}
             Page::Login(_) => {}
             Page::Scopes(scopes_page) => {
                 scopes_page.handle_event(event).await;
@@ -371,7 +456,30 @@ where
                 let _ = notify_stopped_tx.send(()).await;
             }
             Message::ShowAlert(title, message) => {
-                self.alert = Some((title.clone(), message.clone()));
+                // Detect auth errors at runtime and trigger re-authentication.
+                let is_auth_error = title.contains("Error")
+                    && (message.contains("401") || message.contains("Unauthorized")
+                        || message.contains("permission denied")
+                        || message.contains("not authorized"));
+                if is_auth_error {
+                    log::info!("Auth error detected at runtime — clearing cache and showing login");
+                    if let Some(ref path) = self.auth_cache_path {
+                        let _ = auth_cache::clear_auth_token(path);
+                    }
+                    unsafe { std::env::remove_var("BOUNDARY_TOKEN") };
+                    self.alert = Some((
+                        "Session Expired".to_string(),
+                        "Your session has expired. Please log in again.".to_string(),
+                    ));
+                    let client = self.boundary_client.clone();
+                    let tx = self.message_tx.clone();
+                    self.navigate_to(
+                        Page::Login(LoginPage::new(client, tx)),
+                        true,
+                    );
+                } else {
+                    self.alert = Some((title.clone(), message.clone()));
+                }
             }
             Message::GoBack => self.go_back(),
             Message::Targets(targets_message) => {
@@ -428,8 +536,31 @@ where
             }
             Message::Authenticated(auth_response) => {
                 unsafe { std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token) };
-                self.user_id = auth_response.attributes.user_id;
+                self.user_id = auth_response.attributes.user_id.clone();
+                // Save the token to cache for future sessions.
+                if let Some(ref path) = self.auth_cache_path {
+                    let _ = auth_cache::save_auth_token(
+                        path,
+                        &auth_response.attributes.token,
+                        &auth_response.attributes.user_id,
+                    );
+                }
                 self.navigate_to_scope_tree().await;
+            }
+            Message::AuthCacheOk { user_id, token } => {
+                log::info!("Using cached auth token");
+                unsafe { std::env::set_var("BOUNDARY_TOKEN", &token) };
+                self.user_id = user_id;
+                self.navigate_to_scope_tree().await;
+            }
+            Message::ShowLogin => {
+                log::info!("Showing login page");
+                let client = self.boundary_client.clone();
+                let tx = self.message_tx.clone();
+                self.navigate_to(
+                    Page::Login(LoginPage::new(client, tx)),
+                    true,
+                );
             }
         }
     }
@@ -512,6 +643,7 @@ mod tests {
             remember_user_input,
             evt_rx,
             clipboard,
+            None,
         );
 
         for _ in 0..10 {
@@ -541,6 +673,7 @@ mod tests {
             remember_user_input,
             evt_rx,
             Box::new(MockClipboardAccess::new()),
+            None,
         );
 
         for _ in 0..10 {

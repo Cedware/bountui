@@ -17,3 +17,14 @@ pub enum Error {
     #[error("Port {0} is not available")]
     PortNotAvailable(u16),
 }
+
+impl Error {
+    /// Returns true if this error indicates the auth token is invalid/expired
+    /// and the user needs to re-authenticate.
+    pub fn is_authentication_error(&self) -> bool {
+        matches!(
+            self,
+            Error::ApiError(401, _) | Error::ApiError(403, _)
+        )
+    }
+}
