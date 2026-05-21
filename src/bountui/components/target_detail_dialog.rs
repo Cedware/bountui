@@ -158,9 +158,8 @@ impl TargetDetailDialog {
 }
 
 impl SortItems<TargetDetailRow> for TablePage<TargetDetailRow> {
-    fn sort(items: &mut Vec<Rc<TargetDetailRow>>) {
+    fn sort(_: &mut Vec<Rc<TargetDetailRow>>) {
         // Keep original order — no sorting
-        let _ = items;
     }
 }
 
