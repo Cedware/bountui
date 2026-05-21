@@ -104,6 +104,11 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
                 "c".to_string(),
                 Box::new(|item: Option<&Target>| item.map_or(false, |t| t.can_connect())),
             ),
+            Action::new(
+                "Show Details".to_string(),
+                "d".to_string(),
+                Box::new(|item: Option<&Target>| item.is_some()),
+            ),
         ];
 
         let table_page = TablePage::new(
