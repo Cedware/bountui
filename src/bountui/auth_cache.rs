@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
+
+pub trait AuthTokenCache {
+    fn save_auth_token(&self, token: &str, user_id: &str) -> Result<(), String>;
+    fn load_auth_token(&self) -> Result<Option<(String, String)>, String>;
+    fn clear_auth_token(&self) -> Result<(), String>;
+}
 
 #[derive(Serialize, Deserialize)]
 struct CachedAuthToken {
@@ -8,36 +13,54 @@ struct CachedAuthToken {
     user_id: String,
 }
 
-pub fn save_auth_token(path: &Path, token: &str, user_id: &str) -> Result<(), String> {
-    let cached = CachedAuthToken {
-        token: token.to_string(),
-        user_id: user_id.to_string(),
-    };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {e}"))?;
+impl AuthTokenCache for &Path {
+    fn save_auth_token(&self, token: &str, user_id: &str) -> Result<(), String> {
+        let cached = CachedAuthToken {
+            token: token.to_string(),
+            user_id: user_id.to_string(),
+        };
+        if let Some(parent) = self.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {e}"))?;
+        }
+        let json = serde_json::to_string_pretty(&cached)
+            .map_err(|e| format!("Failed to serialize: {e}"))?;
+        std::fs::write(self, json).map_err(|e| format!("Failed to write: {e}"))?;
+        Ok(())
     }
-    let json =
-        serde_json::to_string_pretty(&cached).map_err(|e| format!("Failed to serialize: {e}"))?;
-    fs::write(path, json).map_err(|e| format!("Failed to write: {e}"))?;
-    Ok(())
+
+    fn load_auth_token(&self) -> Result<Option<(String, String)>, String> {
+        if !self.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(self)
+            .map_err(|e| format!("Failed to read auth token: {e}"))?;
+        let cached: CachedAuthToken =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse auth token: {e}"))?;
+        Ok(Some((cached.token, cached.user_id)))
+    }
+
+    fn clear_auth_token(&self) -> Result<(), String> {
+        if self.exists() {
+            std::fs::remove_file(self)
+                .map_err(|e| format!("Failed to remove auth token: {e}"))?;
+        }
+        Ok(())
+    }
 }
 
-pub fn load_auth_token(path: &Path) -> Result<Option<(String, String)>, String> {
-    if !path.exists() {
-        return Ok(None);
+impl AuthTokenCache for std::path::PathBuf {
+    fn save_auth_token(&self, token: &str, user_id: &str) -> Result<(), String> {
+        self.as_path().save_auth_token(token, user_id)
     }
-    let content =
-        fs::read_to_string(path).map_err(|e| format!("Failed to read auth token: {e}"))?;
-    let cached: CachedAuthToken =
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse auth token: {e}"))?;
-    Ok(Some((cached.token, cached.user_id)))
-}
 
-pub fn clear_auth_token(path: &Path) -> Result<(), String> {
-    if path.exists() {
-        fs::remove_file(path).map_err(|e| format!("Failed to remove auth token: {e}"))?;
+    fn load_auth_token(&self) -> Result<Option<(String, String)>, String> {
+        self.as_path().load_auth_token()
     }
-    Ok(())
+
+    fn clear_auth_token(&self) -> Result<(), String> {
+        self.as_path().clear_auth_token()
+    }
 }
 
 #[cfg(test)]
@@ -50,16 +73,17 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path();
 
-        save_auth_token(path, "at_abc123", "u_xyz789").unwrap();
+        path.save_auth_token("at_abc123", "u_xyz789").unwrap();
 
-        let (token, user_id) = load_auth_token(path).unwrap().unwrap();
+        let (token, user_id) = path.load_auth_token().unwrap().unwrap();
         assert_eq!(token, "at_abc123");
         assert_eq!(user_id, "u_xyz789");
     }
 
     #[test]
     fn load_nonexistent_file() {
-        let result = load_auth_token(Path::new("/tmp/does_not_exist_42.json")).unwrap();
+        let path = Path::new("/tmp/does_not_exist_42.json");
+        let result = path.load_auth_token().unwrap();
         assert!(result.is_none());
     }
 
@@ -68,16 +92,17 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path();
 
-        save_auth_token(path, "at_x", "u_y").unwrap();
+        path.save_auth_token("at_x", "u_y").unwrap();
         assert!(path.exists());
 
-        clear_auth_token(path).unwrap();
+        path.clear_auth_token().unwrap();
         assert!(!path.exists());
     }
 
     #[test]
     fn clear_nonexistent_file_is_okay() {
-        let result = clear_auth_token(Path::new("/tmp/does_not_exist_99.json"));
+        let path = Path::new("/tmp/does_not_exist_99.json");
+        let result = path.clear_auth_token();
         assert!(result.is_ok());
     }
 
@@ -86,10 +111,10 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let path = file.path();
 
-        save_auth_token(path, "at_old", "u_old").unwrap();
-        save_auth_token(path, "at_new", "u_new").unwrap();
+        path.save_auth_token("at_old", "u_old").unwrap();
+        path.save_auth_token("at_new", "u_new").unwrap();
 
-        let (token, user_id) = load_auth_token(path).unwrap().unwrap();
+        let (token, user_id) = path.load_auth_token().unwrap().unwrap();
         assert_eq!(token, "at_new");
         assert_eq!(user_id, "u_new");
     }
@@ -101,7 +126,7 @@ mod tests {
         file.write_all(b"not json").unwrap();
         let path = file.path();
 
-        let result = load_auth_token(path);
+        let result = path.load_auth_token();
         assert!(result.is_err());
     }
 }

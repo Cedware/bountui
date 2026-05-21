@@ -1,5 +1,6 @@
 use crate::boundary;
 use crate::boundary::{AuthenticateResponse, Scope, Target};
+use crate::bountui::auth_cache::AuthTokenCache;
 use crate::bountui::components::table::scope::{ScopesPage, ScopesPageMessage};
 use crate::bountui::components::table::sessions::{
     LoadTargetSessionsSessions, LoadUserSessions, SessionsPage, SessionsPageMessage,
@@ -123,7 +124,7 @@ async fn check_cached_auth_token<C: boundary::ApiClient + Clone + Send + Sync + 
     client: C,
     tx: tokio::sync::mpsc::Sender<Message>,
 ) {
-    let cached = match auth_cache::load_auth_token(cache_path) {
+    let cached = match cache_path.load_auth_token() {
         Ok(Some((token, user_id))) => (token, user_id),
         Ok(None) => {
             // No cached token — show login page.
@@ -156,7 +157,7 @@ async fn check_cached_auth_token<C: boundary::ApiClient + Clone + Send + Sync + 
                 "Cached auth token rejected ({}), clearing cache and showing login",
                 e
             );
-            let _ = auth_cache::clear_auth_token(cache_path);
+            let _ = cache_path.clear_auth_token();
             unsafe { std::env::remove_var("BOUNDARY_TOKEN") };
             let _ = tx.send(Message::ShowLogin).await;
         }
@@ -464,7 +465,7 @@ where
                 if is_auth_error {
                     log::info!("Auth error detected at runtime — clearing cache and showing login");
                     if let Some(ref path) = self.auth_cache_path {
-                        let _ = auth_cache::clear_auth_token(path);
+                        let _ = path.clear_auth_token();
                     }
                     unsafe { std::env::remove_var("BOUNDARY_TOKEN") };
                     self.alert = Some((
@@ -539,8 +540,7 @@ where
                 self.user_id = auth_response.attributes.user_id.clone();
                 // Save the token to cache for future sessions.
                 if let Some(ref path) = self.auth_cache_path {
-                    let _ = auth_cache::save_auth_token(
-                        path,
+                    let _ = path.save_auth_token(
                         &auth_response.attributes.token,
                         &auth_response.attributes.user_id,
                     );
