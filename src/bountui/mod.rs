@@ -7,6 +7,7 @@ use crate::bountui::components::table::sessions::{
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::ConnectionManager;
+use crate::bountui::loading_page::LoadingPage;
 use crate::bountui::login_page::LoginPage;
 use crate::event_ext::EventExt;
 use crate::util::clipboard::ClipboardAccess;
@@ -22,11 +23,15 @@ use std::fmt::Display;
 use std::mem;
 use tokio::select;
 
+pub mod auth_cache;
 pub mod components;
 pub mod connection_manager;
+mod loading_page;
 mod login_page;
 mod remember_user_input;
 mod widgets;
+
+pub use auth_cache::AuthCache;
 
 pub enum Message {
     ShowScopes {
@@ -63,6 +68,10 @@ pub enum Message {
     RunFuture(BoxFuture<'static, ()>),
     Toaster(components::toaster::Message),
     Authenticated(AuthenticateResponse),
+    /// Sent during startup after the cached token was successfully validated against the API.
+    TokenRestored(AuthenticateResponse),
+    /// Sent during startup when the cached token failed validation (expired / revoked).
+    TokenInvalid,
 }
 
 impl Message {
@@ -75,6 +84,7 @@ impl Message {
 }
 
 pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: RememberUserInput> {
+    Loading(LoadingPage),
     Login(LoginPage<B>),
     Scopes(ScopesPage),
     Targets(TargetsPage<B, R>),
@@ -85,7 +95,7 @@ pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: Remembe
 pub struct BountuiApp<
     C: boundary::ApiClient + Clone + Send + Sync + 'static,
     R: RememberUserInput + Copy,
-    M: ConnectionManager,
+    M: ConnectionManager
 > {
     page: Page<C, R>,
     boundary_client: C,
@@ -101,13 +111,15 @@ pub struct BountuiApp<
     remember_user_input: R,
     clipboard: Box<dyn ClipboardAccess>,
     toaster: components::toaster::Toaster,
+    auth_cache: Box<dyn AuthCache>,
+    frame_count: u64,
 }
 
 impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
 where
     C: boundary::ApiClient + Clone + Send + Sync,
     C::ConnectionHandle: Send,
-    M: ConnectionManager,
+    M: ConnectionManager
 {
     pub fn new(
         boundary_client: C,
@@ -115,13 +127,19 @@ where
         remember_user_input: R,
         cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
         clipboard: Box<dyn ClipboardAccess>,
+        auth_cache: Box<dyn AuthCache>,
     ) -> Self {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
-        let page = Page::Login(LoginPage::new(boundary_client.clone(), message_tx.clone()));
+
+        let (page, user_id) = Self::resolve_initial_page(
+            &auth_cache,
+            &message_tx,
+            &boundary_client,
+        );
 
         BountuiApp {
             boundary_client,
-            user_id: String::new(),
+            user_id,
             page,
             history: vec![],
             connection_manager,
@@ -134,6 +152,47 @@ where
             remember_user_input,
             clipboard,
             toaster: components::toaster::Toaster::new(message_tx),
+            auth_cache,
+            frame_count: 0,
+        }
+    }
+
+    fn resolve_initial_page(
+        auth_cache: &Box<dyn AuthCache>,
+        message_tx: &tokio::sync::mpsc::Sender<Message>,
+        boundary_client: &C,
+    ) -> (Page<C, R>, String) {
+        if let Some(cached) = auth_cache.get_cached_token() {
+            unsafe {
+                std::env::set_var("BOUNDARY_TOKEN", &cached.token);
+            }
+            let user_id = cached.user_id.clone();
+            let tx = message_tx.clone();
+            let auth_response = AuthenticateResponse {
+                attributes: boundary::client::response::AuthenticateAttributes {
+                    user_id: cached.user_id,
+                    token: cached.token,
+                },
+            };
+            let client = boundary_client.clone();
+            tokio::spawn(async move {
+                match client.get_scopes(None, false).await {
+                    Ok(_) => {
+                        log::info!("auth_cache: cached token is valid — restoring session");
+                        let _ = tx.send(Message::TokenRestored(auth_response)).await;
+                    }
+                    Err(e) => {
+                        log::warn!("auth_cache: cached token validation failed: {e} — falling back to login");
+                        let _ = tx.send(Message::TokenInvalid).await;
+                    }
+                }
+            });
+            (Page::Loading(LoadingPage), user_id)
+        } else {
+            (
+                Page::Login(LoginPage::new(boundary_client.clone(), message_tx.clone())),
+                String::new(),
+            )
         }
     }
 
@@ -252,7 +311,7 @@ where
         self.toaster.layout(frame_area);
     }
 
-    pub fn view(&self, frame: &mut Frame) {
+    pub fn view(&mut self, frame: &mut Frame) {
         if let Some((title, message)) = &self.alert {
             frame.render_widget(
                 widgets::Alert::new(title.to_string(), message.to_string()),
@@ -275,6 +334,13 @@ where
         }
 
         match &self.page {
+            Page::Loading(_) => {
+                self.frame_count = self.frame_count.wrapping_add(1);
+                let loading_screen = widgets::LoadingScreen {
+                    frame_count: self.frame_count,
+                };
+                frame.render_widget(loading_screen, content_area);
+            }
             Page::Login(_) => {
                 frame.render_widget(widgets::LoginScreen, content_area);
             }
@@ -324,6 +390,7 @@ where
         }
 
         match &mut self.page {
+            Page::Loading(_) => {}
             Page::Login(_) => {}
             Page::Scopes(scopes_page) => {
                 scopes_page.handle_event(event).await;
@@ -427,9 +494,41 @@ where
                 self.toaster.handle_message(toaster_message).await;
             }
             Message::Authenticated(auth_response) => {
-                unsafe { std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token) };
-                self.user_id = auth_response.attributes.user_id;
+                unsafe {
+                    std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token);
+                }
+                self.user_id = auth_response.attributes.user_id.clone();
+
+                // Cache the token after a successful login.
+                if self.auth_cache.is_available() {
+                    if let Err(e) = self.auth_cache.cache_token(
+                        &auth_response.attributes.token,
+                        &auth_response.attributes.user_id,
+                    ) {
+                        log::error!("Failed to cache auth token: {e}");
+                    }
+                }
+
                 self.navigate_to_scope_tree().await;
+            }
+            Message::TokenRestored(auth_response) => {
+                // Token was validated — same setup as a fresh login, but without re-caching.
+                unsafe {
+                    std::env::set_var("BOUNDARY_TOKEN", &auth_response.attributes.token);
+                }
+                self.user_id = auth_response.attributes.user_id.clone();
+                self.navigate_to_scope_tree().await;
+            }
+            Message::TokenInvalid => {
+                // Cached token is expired or revoked — clear it and start the login flow.
+                if let Err(e) = self.auth_cache.clear_cache() {
+                    log::error!("auth_cache: failed to clear invalid token from keyring: {e}");
+                }
+                self.user_id = String::new();
+                self.page = Page::Login(LoginPage::new(
+                    self.boundary_client.clone(),
+                    self.message_tx.clone(),
+                ));
             }
         }
     }
@@ -487,6 +586,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bountui::auth_cache::tests::MockAuthCache;
     use crate::bountui::connection_manager::{DefaultConnectionManager, MockConnectionManager};
     use crate::util::clipboard::{ClipboardAccessError, MockClipboardAccess};
     use mockall::predicate::eq;
@@ -497,6 +597,10 @@ mod tests {
             .user_id("user-1".to_string())
             .scopes(HashMap::new())
             .build()
+    }
+
+    fn noop_auth_cache() -> Box<dyn AuthCache> {
+        Box::new(MockAuthCache::without_cache())
     }
 
     async fn make_authenticated_app<M: ConnectionManager>(
@@ -512,6 +616,7 @@ mod tests {
             remember_user_input,
             evt_rx,
             clipboard,
+            noop_auth_cache(),
         );
 
         for _ in 0..10 {
@@ -541,6 +646,7 @@ mod tests {
             remember_user_input,
             evt_rx,
             Box::new(MockClipboardAccess::new()),
+            noop_auth_cache(),
         );
 
         for _ in 0..10 {
