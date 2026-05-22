@@ -4,6 +4,7 @@ mod cross_term;
 pub mod event_ext;
 mod util;
 
+use crate::bountui::auth_cache::{AuthCache, KeyringAuthCache, NoopAuthCache};
 use crate::bountui::{BountuiApp, UserInputsPath};
 use crate::cross_term::receive_cross_term_events;
 use crate::util::clipboard::{ArboardClipboard, BrokenClipboard, ClipboardAccess};
@@ -93,12 +94,24 @@ async fn main() {
         }
     };
 
+    let auth_cache: Box<dyn AuthCache> = match KeyringAuthCache::new() {
+        Some(cache) => {
+            log::info!("Keyring backend is available — auth token caching enabled.");
+            Box::new(cache)
+        }
+        None => {
+            log::info!("Keyring backend is not available — auth token caching disabled.");
+            Box::new(NoopAuthCache)
+        }
+    };
+
     let mut app = BountuiApp::new(
         boundary_client,
         connection_manager,
         user_inputs_path,
         cross_term_event_rx,
         clipboard,
+        auth_cache,
     );
     let _ = app.run().await;
 }

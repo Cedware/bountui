@@ -53,9 +53,12 @@ cargo test <module_path>::tests
 
 **Trait-based abstraction**: `ApiClient` trait abstracts the Boundary CLI, enabling mocking in tests. `BoundaryConnectionHandle` trait abstracts connection lifecycle.
 
-### Testing
+# Testing
 
 Tests use `mockall` for mocking traits. The `MockApiClient` and `MockConnectionManager` are auto-generated. Test helpers exist in `src/mock.rs`.
+
+When mocking traits is needed for new functionality, prefer hand-written mock implementations over `mockall::automock`.
+Write mock structs manually with the same trait impl.
 
 ## Environment
 
