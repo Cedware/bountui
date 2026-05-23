@@ -52,10 +52,14 @@ jobs:
           name: bountui-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           retention-days: 1
+  check_aur_build:
+    uses: ./.github/workflows/check-aur-build.yml
+    if: github.ref == 'refs/heads/main'
   release:
     needs:
       - build
       - test
+      - check_aur_build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     outputs:
