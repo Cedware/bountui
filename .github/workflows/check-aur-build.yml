@@ -7,10 +7,10 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install prerequisites
-        run: pacman -Sy --noconfirm base-devel git nodejs rustup dbus
+        run: |
+          pacman -Sy --noconfirm base-devel git nodejs rust dbus
+          useradd -m builder
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        run: rustup default stable
       - name: Extract version
         id: version
         run: |
@@ -21,8 +21,9 @@ jobs:
           mkdir -p /tmp/build/src/bountui-"${{ steps.version.outputs.version }}"
           cp -r . /tmp/build/src/bountui-"${{ steps.version.outputs.version }}"/
           cp PKGBUILD /tmp/build/PKGBUILD
+          sed -i "s/pkgver=.*/pkgver=${{ steps.version.outputs.version }}/" /tmp/build/PKGBUILD
+          sed -i "s/pkgrel=.*/pkgrel=1/" /tmp/build/PKGBUILD
+          sed -i "s/sha256sums=.*/sha256sums=('SKIP')/" /tmp/build/PKGBUILD
+          chown -R builder:builder /tmp/build
           cd /tmp/build
-          sed -i "s/pkgver=.*/pkgver=${{ steps.version.outputs.version }}/" PKGBUILD
-          sed -i "s/pkgrel=.*/pkgrel=1/" PKGBUILD
-          sed -i "s/sha256sums=.*/sha256sums=('SKIP')/" PKGBUILD
-          makepkg --noextract --nocheck
+          runuser -u builder -- makepkg --noextract --nocheck
