@@ -21,9 +21,7 @@ jobs:
           mkdir -p /tmp/build/src/bountui-"${{ steps.version.outputs.version }}"
           cp -r . /tmp/build/src/bountui-"${{ steps.version.outputs.version }}"/
           cp PKGBUILD /tmp/build/PKGBUILD
-          sed -i "s/pkgver=.*/pkgver=${{ steps.version.outputs.version }}/" /tmp/build/PKGBUILD
-          sed -i "s/pkgrel=.*/pkgrel=1/" /tmp/build/PKGBUILD
-          sed -i "s/sha256sums=.*/sha256sums=('SKIP')/" /tmp/build/PKGBUILD
+          bash scripts/fill-pkgbuild.sh /tmp/build/PKGBUILD "${{ steps.version.outputs.version }}" 1 "" SKIP
           chown -R builder:builder /tmp/build
           cd /tmp/build
           runuser -u builder -- makepkg --noextract --nocheck
