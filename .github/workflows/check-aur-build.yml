@@ -8,8 +8,11 @@ jobs:
     steps:
       - name: Install prerequisites
         run: |
-          pacman -Sy --noconfirm base-devel git nodejs rust dbus
+          pacman -Sy --noconfirm base-devel git nodejs openssl dbus
           useradd -m builder
+      - name: Install Rust for builder
+        run: |
+          runuser -u builder -- curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
       - uses: actions/checkout@v4
       - name: Extract version
         id: version
@@ -24,4 +27,9 @@ jobs:
           bash scripts/fill-pkgbuild.sh /tmp/build/PKGBUILD "${{ steps.version.outputs.version }}" 1 "" SKIP
           chown -R builder:builder /tmp/build
           cd /tmp/build
-          runuser -u builder -- makepkg --noextract --nocheck
+          runuser -u builder -- bash -c '
+            export PATH="$HOME/.cargo/bin:$PATH"
+            export RUSTUP_HOME="$HOME/.rustup"
+            export CARGO_HOME="$HOME/.cargo"
+            makepkg --noextract --nocheck
+          '
