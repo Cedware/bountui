@@ -31,5 +31,8 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
             export RUSTUP_HOME="$HOME/.rustup"
             export CARGO_HOME="$HOME/.cargo"
+            cd src/bountui-'"${{ steps.version.outputs.version }}"'
+            cargo fetch --locked
+            cd /tmp/build
             makepkg --noextract --nocheck
           '
