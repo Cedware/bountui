@@ -26,6 +26,7 @@ validpgpkeys=()
 prepare() {
     cd "$srcdir/${pkgname}-${pkgver}"
     export RUSTUP_TOOLCHAIN=stable
+    export CFLAGS="" CXXFLAGS=""
     cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
@@ -33,6 +34,7 @@ build(){
     cd "$srcdir/${pkgname}-${pkgver}"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
+    export CFLAGS="" CXXFLAGS=""
     cargo build --frozen --release --all-features
 }
 
