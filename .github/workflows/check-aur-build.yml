@@ -8,7 +8,7 @@ jobs:
     steps:
       - name: Install prerequisites
         run: |
-          pacman -Sy --noconfirm base-devel git nodejs openssl dbus
+          pacman -Sy --noconfirm base-devel git nodejs openssl dbus cargo
           useradd -m builder
       - name: Install Rust for builder
         run: |
