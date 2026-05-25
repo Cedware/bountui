@@ -52,10 +52,14 @@ jobs:
           name: bountui-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           retention-days: 1
+  check_aur_build:
+    uses: ./.github/workflows/check-aur-build.yml
+    if: github.ref == 'refs/heads/main'
   release:
     needs:
       - build
       - test
+      - check_aur_build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     outputs:
@@ -119,10 +123,7 @@ jobs:
           curl -L $src_tarball_url -o src.tar.gz
           checksum=$(sha256sum src.tar.gz | cut -d ' ' -f 1)
           echo "checksum: $checksum"
-          sed -i "s/pkgrel=.*/pkgrel=$pkgrel/" aur/PKGBUILD
-          sed -i "s/pkgver=.*/pkgver=${{ needs.release.outputs.new_release_version }}/" aur/PKGBUILD
-          sed -i "s|source=.*|source=(\"$src_tarball_url\")|" aur/PKGBUILD
-          sed -i "s/sha256sums=.*/sha256sums=(\"$checksum\")/" aur/PKGBUILD
+          bash source_repo/scripts/fill-pkgbuild.sh aur/PKGBUILD ${{ needs.release.outputs.new_release_version }} $pkgrel "$src_tarball_url" "$checksum"
           cd aur
           docker run --rm -v $GITHUB_WORKSPACE/aur:/workspace -w /workspace -u $(id -u):$(id -g) archlinux:latest bash -c "
             makepkg --printsrcinfo > .SRCINFO

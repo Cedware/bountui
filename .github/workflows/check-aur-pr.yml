@@ -1,0 +1,12 @@
+name: Check AUR Build (PR)
+on:
+  pull_request:
+    paths:
+      - "PKGBUILD"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/**"
+jobs:
+  check:
+    uses: ./.github/workflows/check-aur-build.yml
