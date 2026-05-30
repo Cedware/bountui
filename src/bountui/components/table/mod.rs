@@ -18,7 +18,6 @@ use crate::bountui::Message::GoBack;
 pub use action::Action;
 use ratatui::prelude::Rect;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::block::{Position, Title};
 use ratatui::widgets::{Block, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
 use std::rc::Rc;
@@ -162,7 +161,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         table_state.select(Some(new_selected));
     }
 
-    fn instructions(&'_ self) -> Title<'_>
+    fn instructions(&'_ self) -> Line<'_>
     {
         let spans: Vec<Span> = self
             .actions
@@ -177,7 +176,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
             })
             .collect();
 
-        Title::from(Line::from(spans))
+        Line::from(spans)
     }
 
     fn rows(&'_ self) -> Vec<Row<'_>> {
@@ -195,17 +194,13 @@ impl<T> TablePage<T> where Self: SortItems<T> {
 
     fn table(&'_ self) -> Table<'_>
     {
-        let title = Title::from(self.title.clone().bold());
+        let title = Line::from(self.title.clone().bold());
 
         let rows: Vec<Row> = self.rows();
 
         let block = Block::bordered()
-            .title(title.alignment(Alignment::Center))
-            .title(
-                self.instructions()
-                    .position(Position::Bottom)
-                    .alignment(Alignment::Center),
-            )
+            .title(title.centered())
+            .title_bottom(self.instructions().centered())
             .light_blue()
             .bg(Color::Black);
         let header_items: Vec<Span> = self
@@ -218,7 +213,7 @@ impl<T> TablePage<T> where Self: SortItems<T> {
         let width_constraints: Vec<Constraint> = self.columns.iter().map(|c| c.width).collect();
         Table::new(rows, width_constraints)
             .header(header)
-            .highlight_style(Style::new().reversed())
+            .row_highlight_style(Style::new().reversed())
             .block(block)
     }
 
