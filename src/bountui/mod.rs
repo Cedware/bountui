@@ -167,11 +167,15 @@ where
                 std::env::set_var("BOUNDARY_TOKEN", &cached.token);
             }
             let user_id = cached.user_id.clone();
+            let expiration_time = cached.expiration_time;
             let tx = message_tx.clone();
             let auth_response = AuthenticateResponse {
                 attributes: boundary::client::response::AuthenticateAttributes {
                     user_id: cached.user_id,
                     token: cached.token,
+                    expiration_time: expiration_time.expect(
+                        "cached token passed expiry check but has no expiration_time",
+                    ),
                 },
             };
             let client = boundary_client.clone();
@@ -504,6 +508,7 @@ where
                     if let Err(e) = self.auth_cache.cache_token(
                         &auth_response.attributes.token,
                         &auth_response.attributes.user_id,
+                        auth_response.attributes.expiration_time,
                     ) {
                         log::error!("Failed to cache auth token: {e}");
                     }
@@ -586,7 +591,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bountui::auth_cache::tests::MockAuthCache;
+    use crate::bountui::auth_cache::tests::mock_auth_cache;
     use crate::bountui::connection_manager::{DefaultConnectionManager, MockConnectionManager};
     use crate::util::clipboard::{ClipboardAccessError, MockClipboardAccess};
     use mockall::predicate::eq;
@@ -600,7 +605,7 @@ mod tests {
     }
 
     fn noop_auth_cache() -> Box<dyn AuthCache> {
-        Box::new(MockAuthCache::without_cache())
+        Box::new(mock_auth_cache().call())
     }
 
     async fn make_authenticated_app<M: ConnectionManager>(

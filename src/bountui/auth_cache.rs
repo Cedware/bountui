@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Serializable struct containing the cached auth token and associated user id.
@@ -5,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct CachedAuth {
     pub token: String,
     pub user_id: String,
+    #[serde(default)]
+    pub expiration_time: Option<DateTime<Utc>>,
 }
 
 /// Trait for caching Boundary auth tokens.
@@ -12,8 +15,13 @@ pub trait AuthCache: Send + Sync {
     /// Returns `Some(CachedAuth)` if a valid cached token exists, `None` otherwise.
     fn get_cached_token(&self) -> Option<CachedAuth>;
 
-    /// Store the auth token and associated user_id.
-    fn cache_token(&self, token: &str, user_id: &str) -> anyhow::Result<()>;
+    /// Store the auth token and associated user_id and expiration time.
+    fn cache_token(
+        &self,
+        token: &str,
+        user_id: &str,
+        expiration_time: DateTime<Utc>,
+    ) -> anyhow::Result<()>;
 
     /// Remove the cached credential from the keyring.
     fn clear_cache(&self) -> anyhow::Result<()>;
@@ -76,13 +84,30 @@ impl KeyringAuthCache {
 impl AuthCache for KeyringAuthCache {
     fn get_cached_token(&self) -> Option<CachedAuth> {
         let password = self.entry.get_password().ok()?;
-        serde_json::from_str(&password).ok()
+        let cached: CachedAuth = serde_json::from_str(&password).ok()?;
+        match cached.expiration_time {
+            Some(exp) if exp > Utc::now() => Some(cached),
+            Some(_) => {
+                log::warn!("auth_cache: cached token is expired");
+                None
+            }
+            None => {
+                log::warn!("auth_cache: cached token has no expiration time, treating as expired");
+                None
+            }
+        }
     }
 
-    fn cache_token(&self, token: &str, user_id: &str) -> anyhow::Result<()> {
+    fn cache_token(
+        &self,
+        token: &str,
+        user_id: &str,
+        expiration_time: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
         let cached = CachedAuth {
             token: token.to_string(),
             user_id: user_id.to_string(),
+            expiration_time: Some(expiration_time),
         };
         let json = serde_json::to_string(&cached)?;
         self.entry.set_password(&json)?;
@@ -109,7 +134,7 @@ impl AuthCache for NoopAuthCache {
         None
     }
 
-    fn cache_token(&self, _token: &str, _user_id: &str) -> anyhow::Result<()> {
+    fn cache_token(&self, _token: &str, _user_id: &str, _expiration_time: DateTime<Utc>) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -125,67 +150,57 @@ impl AuthCache for NoopAuthCache {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use bon::builder;
 
     /// Hand-written mock that allows fine-grained control over the cached token.
     pub struct MockAuthCache {
         cached: std::sync::Mutex<Option<CachedAuth>>,
-        cache_calls: std::sync::Mutex<Vec<(String, String)>>,
+        cache_calls: std::sync::Mutex<Vec<(String, String, DateTime<Utc>)>>,
         available: bool,
     }
 
-    impl Default for MockAuthCache {
-        fn default() -> Self {
-            Self {
-                cached: std::sync::Mutex::new(None),
-                cache_calls: std::sync::Mutex::new(Vec::new()),
-                available: true,
-            }
-        }
-    }
-
-    impl MockAuthCache {
-        /// Create a mock with a pre-cached token (simulates a cache hit).
-        pub fn with_cached_token(token: &str, user_id: &str) -> Self {
-            Self {
-                cached: std::sync::Mutex::new(Some(CachedAuth {
-                    token: token.to_string(),
-                    user_id: user_id.to_string(),
-                })),
-                cache_calls: std::sync::Mutex::new(Vec::new()),
-                available: true,
-            }
-        }
-
-        /// Create a mock without any cached token (simulates a cache miss).
-        pub fn without_cache() -> Self {
-            Self::default()
-        }
-
-        /// Create a mock where the keyring is not available.
-        pub fn unavailable() -> Self {
-            Self {
-                cached: std::sync::Mutex::new(None),
-                cache_calls: std::sync::Mutex::new(Vec::new()),
-                available: false,
-            }
-        }
-
-        /// Return the list of (token, user_id) pairs that were cached via `cache_token`.
-        pub fn cache_call_args(&self) -> Vec<(String, String)> {
-            self.cache_calls.lock().unwrap().clone()
+    #[builder]
+    pub fn mock_auth_cache(
+        token: Option<&str>,
+        user_id: Option<&str>,
+        expiration_time: Option<DateTime<Utc>>,
+        #[builder(default = true)] available: bool,
+    ) -> MockAuthCache {
+        let cached = match (token, user_id) {
+            (Some(token), Some(user_id)) => Some(CachedAuth {
+                token: token.to_string(),
+                user_id: user_id.to_string(),
+                expiration_time,
+            }),
+            _ => None,
+        };
+        MockAuthCache {
+            cached: std::sync::Mutex::new(cached),
+            cache_calls: std::sync::Mutex::new(Vec::new()),
+            available,
         }
     }
 
     impl AuthCache for MockAuthCache {
         fn get_cached_token(&self) -> Option<CachedAuth> {
-            self.cached.lock().unwrap().clone()
+            let cached = self.cached.lock().unwrap().clone()?;
+            match cached.expiration_time {
+                Some(exp) if exp > Utc::now() => Some(cached),
+                _ => None,
+            }
         }
 
-        fn cache_token(&self, token: &str, user_id: &str) -> anyhow::Result<()> {
-            self.cache_calls
-                .lock()
-                .unwrap()
-                .push((token.to_string(), user_id.to_string()));
+        fn cache_token(
+            &self,
+            token: &str,
+            user_id: &str,
+            expiration_time: DateTime<Utc>,
+        ) -> anyhow::Result<()> {
+            self.cache_calls.lock().unwrap().push((
+                token.to_string(),
+                user_id.to_string(),
+                expiration_time,
+            ));
             Ok(())
         }
 
@@ -197,46 +212,5 @@ pub(crate) mod tests {
         fn is_available(&self) -> bool {
             self.available
         }
-    }
-
-    #[test]
-    fn test_mock_auth_cache_with_token() {
-        let cache = MockAuthCache::with_cached_token("tk123", "user-1");
-        assert!(cache.is_available());
-        let cached = cache.get_cached_token().unwrap();
-        assert_eq!(cached.token, "tk123");
-        assert_eq!(cached.user_id, "user-1");
-    }
-
-    #[test]
-    fn test_mock_auth_cache_without_token() {
-        let cache = MockAuthCache::without_cache();
-        assert!(cache.is_available());
-        assert!(cache.get_cached_token().is_none());
-    }
-
-    #[test]
-    fn test_mock_auth_cache_unavailable() {
-        let cache = MockAuthCache::unavailable();
-        assert!(!cache.is_available());
-        assert!(cache.get_cached_token().is_none());
-    }
-
-    #[test]
-    fn test_mock_auth_cache_records_cache_calls() {
-        let cache = MockAuthCache::without_cache();
-        cache.cache_token("tk456", "user-2").unwrap();
-        let calls = cache.cache_call_args();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "tk456");
-        assert_eq!(calls[0].1, "user-2");
-    }
-
-    #[test]
-    fn test_mock_clear_cache() {
-        let cache = MockAuthCache::with_cached_token("tk789", "user-3");
-        assert!(cache.get_cached_token().is_some());
-        cache.clear_cache().unwrap();
-        assert!(cache.get_cached_token().is_none());
     }
 }

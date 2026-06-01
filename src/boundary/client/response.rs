@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -29,5 +30,6 @@ pub struct AuthenticateResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthenticateAttributes {
     pub user_id: String,
-    pub token: String
+    pub token: String,
+    pub expiration_time: DateTime<Utc>,
 }

@@ -60,6 +60,9 @@ Tests use `mockall` for mocking traits. The `MockApiClient` and `MockConnectionM
 When mocking traits is needed for new functionality, prefer hand-written mock implementations over `mockall::automock`.
 Write mock structs manually with the same trait impl.
 
+- Use `bon::Builder` for hand-written mock structs that benefit from default-valued fields.
+- Do not write tests for mock implementations; mocks are tested indirectly through the tests that use them.
+
 ## Environment
 
 - Requires `boundary` CLI in PATH
