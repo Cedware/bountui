@@ -14,6 +14,8 @@ use tokio::sync::{Mutex, Notify};
 pub struct MockClient {
     #[builder(default)]
     session_lifetime: Duration,
+    #[builder(default = Duration::hours(8))]
+    token_lifetime: Duration,
     #[builder(default)]
     user_id: String,
     #[builder(default)]
@@ -155,6 +157,7 @@ impl ApiClient for MockClient {
             attributes: AuthenticateAttributes {
                 user_id: self.user_id.to_string(),
                 token: format!("token_for_{}", self.user_id),
+                expiration_time: Utc::now() + self.token_lifetime,
             },
         })
     }
