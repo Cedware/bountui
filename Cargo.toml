@@ -13,7 +13,7 @@ serde_json = "1.0.150"
 tui-input = "0.15.3"
 tokio = { version = "1.50.0", features = ["rt", "rt-multi-thread", "macros", "sync", "process", "io-std", "io-util", "time"] }
 tokio-util = "0.7.18"
-log = "0.4.30"
+log = "0.4.31"
 futures = "0.3.31"
 chrono = { version = "0.4", features = ["serde"] }
 mockall = "0.14.0"
