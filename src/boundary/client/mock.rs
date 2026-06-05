@@ -24,6 +24,10 @@ pub struct MockClient {
     authenticate_error_status: u16,
     #[builder(default = "denied".to_string())]
     authenticate_error_message: String,
+    #[builder(default)]
+    validate_token_should_fail: bool,
+    #[builder(default = 401)]
+    validate_token_error_status: u16,
     scopes: HashMap<Option<String>, Vec<Scope>>,
     #[builder(default)]
     targets: HashMap<Option<String>, Vec<Target>>,
@@ -153,13 +157,25 @@ impl ApiClient for MockClient {
             ));
         }
 
+        let token_id = uuid::Uuid::new_v4().to_string();
         Ok(AuthenticateResponse {
             attributes: AuthenticateAttributes {
+                id: token_id,
                 user_id: self.user_id.to_string(),
                 token: format!("token_for_{}", self.user_id),
                 expiration_time: Utc::now() + self.token_lifetime,
             },
         })
+    }
+
+    async fn validate_token(&self, _token_id: &str) -> Result<(), Error> {
+        if self.validate_token_should_fail {
+            return Err(Error::ApiError(
+                self.validate_token_error_status,
+                "token expired or revoked".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 

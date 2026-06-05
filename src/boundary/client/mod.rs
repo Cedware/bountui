@@ -45,6 +45,10 @@ pub trait ApiClient {
     async fn cancel_session(&self, session_id: &str) -> Result<(), Error>;
 
     fn authenticate(&self) -> impl Future<Output = Result<AuthenticateResponse, Error>> + Send;
+
+    /// Validate a cached auth token by its ID against the Boundary API.
+    /// Returns `Ok(())` if the token is still valid, `Err` if it's expired/revoked.
+    fn validate_token(&self, token_id: &str) -> impl Future<Output=Result<(), Error>> + Send;
 }
 
 pub trait ApiClientExt: ApiClient + Sync {
@@ -155,5 +159,9 @@ impl<T: ApiClient> ApiClient for Arc<T> {
 
     fn authenticate(&self) -> impl Future<Output = Result<AuthenticateResponse, Error>> + Send {
         T::authenticate(self)
+    }
+
+    fn validate_token(&self, token_id: &str) -> impl Future<Output=Result<(), Error>> + Send {
+        T::validate_token(self, token_id)
     }
 }

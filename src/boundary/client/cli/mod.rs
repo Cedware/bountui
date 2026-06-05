@@ -26,9 +26,8 @@ const CONNECT_TIMEOUT_MS: i32 = 5000;
 fn parse_boundary_version(output: &str) -> Result<Version, String> {
     for line in output.lines() {
         if let Some(version_str) = line.trim().strip_prefix("Version Number:") {
-            return Version::parse(version_str.trim()).map_err(|e| {
-                format!("invalid version '{}': {}", version_str.trim(), e)
-            });
+            return Version::parse(version_str.trim())
+                .map_err(|e| format!("invalid version '{}': {}", version_str.trim(), e));
         }
     }
     Err("Version Number line not found in output".to_string())
@@ -242,13 +241,16 @@ where
             .expect("This should never happen since we are piping stdout");
         let std_read = BufReader::new(stdout);
 
-        let mut response_lines = std_read
-            .lines();
+        let mut response_lines = std_read.lines();
 
-        let a = tokio::time::timeout(std::time::Duration::from_millis(CONNECT_TIMEOUT_MS as u64), response_lines.next_line())
+        let a = tokio::time::timeout(
+            std::time::Duration::from_millis(CONNECT_TIMEOUT_MS as u64),
+            response_lines.next_line(),
+        )
             .await;
 
-        let response = a.map_err(|_e| Error::ConnectTimeoutError)??
+        let response = a
+            .map_err(|_e| Error::ConnectTimeoutError)??
             .ok_or(CliError(None, "No response from boundary".to_string()))?;
 
         let response: ConnectResponse = serde_json::from_str(&response)?;
@@ -273,6 +275,15 @@ where
         let result = self.get_result_from_output(&output);
         result.map(|auth_resp: ItemResponse<AuthenticateResponse>| auth_resp.item)
     }
+
+    async fn validate_token(&self, token_id: &str) -> Result<(), Error> {
+        let args = vec!["auth-tokens", "read", "-id", token_id, "-format", "json"];
+        let mut command = tokio::process::Command::new(&self.bin_path);
+        let configured_command = command.args(&args);
+        let output = self.command_runner.output(configured_command).await?;
+        let _: IgnoredAny = self.get_result_from_output(&output)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -289,8 +300,6 @@ mod test {
 
     #[tokio::test]
     async fn test_get_scopes() {
-
-
         let response = ListResponse {
             items: Some(vec![Scope::builder()
                 .name("scope1".to_string())
@@ -325,11 +334,20 @@ mod test {
         };
         let response_json = serde_json::to_string(&expected_response).unwrap();
         let std_out = Builder::new().read(response_json.as_bytes()).build();
-        let command_runner = MockCommandRunner::new(vec![
-            MockChild::new(Ok(0), Some(Builder::new().read("Version Number: 0.20.0\n".to_string().as_bytes()).build())),
-            MockChild::new(Ok(0), Some(std_out))
-        ].into());
-
+        let command_runner = MockCommandRunner::new(
+            vec![
+                MockChild::new(
+                    Ok(0),
+                    Some(
+                        Builder::new()
+                            .read("Version Number: 0.20.0\n".to_string().as_bytes())
+                            .build(),
+                    ),
+                ),
+                MockChild::new(Ok(0), Some(std_out)),
+            ]
+                .into(),
+        );
 
         let sut = CliClient {
             bin_path: "boundary".to_string(),
@@ -356,7 +374,6 @@ mod test {
 
     #[tokio::test]
     async fn test_cancel_session_success() {
-
         // JSON returned by boundary sessions cancel -format json
         let response_json = r#"{
    "status_code":200,
@@ -401,7 +418,10 @@ mod test {
    }
 }"#;
 
-        let child = MockChild::new(Ok(0), Some(Builder::new().read(response_json.as_bytes()).build()));
+        let child = MockChild::new(
+            Ok(0),
+            Some(Builder::new().read(response_json.as_bytes()).build()),
+        );
         let command_runner = MockCommandRunner::new(vec![child].into());
 
         let client = CliClient {
@@ -411,12 +431,14 @@ mod test {
         };
 
         let result = client.cancel_session("id").await;
-        assert_ok!(&result, "cancel_session should return Ok when JSON is valid");
+        assert_ok!(
+            &result,
+            "cancel_session should return Ok when JSON is valid"
+        );
     }
 
     #[tokio::test]
     async fn test_connect_with_inactive_timeout_support() {
-
         let expected_response = ConnectResponse {
             credentials: vec![],
             session_id: "session_id".to_string(),
@@ -424,9 +446,18 @@ mod test {
         };
         let response_json = serde_json::to_vec(&expected_response).unwrap();
 
-        let version_number_child = MockChild::new(Ok(0), Some(Builder::new().read("Version Number: 0.21.0\n".as_bytes()).build()));
-        let connect_child = MockChild::new(Ok(0), Some(Builder::new().read(&response_json).build()));
-        let command_runner = MockCommandRunner::new(vec![version_number_child, connect_child].into());
+        let version_number_child = MockChild::new(
+            Ok(0),
+            Some(
+                Builder::new()
+                    .read("Version Number: 0.21.0\n".as_bytes())
+                    .build(),
+            ),
+        );
+        let connect_child =
+            MockChild::new(Ok(0), Some(Builder::new().read(&response_json).build()));
+        let command_runner =
+            MockCommandRunner::new(vec![version_number_child, connect_child].into());
 
         let sut = CliClient {
             bin_path: "boundary".to_string(),
@@ -480,14 +511,18 @@ mod test {
             let output = "Some random output\nNo version here";
             let version = parse_boundary_version(output);
             assert!(version.is_err());
-            assert!(version.unwrap_err().contains("Version Number line not found"));
+            assert!(version
+                .unwrap_err()
+                .contains("Version Number line not found"));
         }
 
         #[test]
         fn test_parse_empty_output() {
             let version = parse_boundary_version("");
             assert!(version.is_err());
-            assert!(version.unwrap_err().contains("Version Number line not found"));
+            assert!(version
+                .unwrap_err()
+                .contains("Version Number line not found"));
         }
 
         #[test]
@@ -501,13 +536,25 @@ mod test {
         #[tokio::test(start_paused = true)]
         async fn test_connect_should_fail_when_boundary_does_not_connect_in_time() {
             let std_out = Builder::new()
-                .wait(std::time::Duration::from_millis((CONNECT_TIMEOUT_MS + 1000) as u64)).build();
+                .wait(std::time::Duration::from_millis(
+                    (CONNECT_TIMEOUT_MS + 1000) as u64,
+                ))
+                .build();
 
-            let command_runner = MockCommandRunner::new(vec![
-                MockChild::new(Ok(0), Some(Builder::new().read("Version Number: 0.20.0\n".to_string().as_bytes()).build())),
-                MockChild::new(Ok(0), Some(std_out))
-            ].into());
-
+            let command_runner = MockCommandRunner::new(
+                vec![
+                    MockChild::new(
+                        Ok(0),
+                        Some(
+                            Builder::new()
+                                .read("Version Number: 0.20.0\n".to_string().as_bytes())
+                                .build(),
+                        ),
+                    ),
+                    MockChild::new(Ok(0), Some(std_out)),
+                ]
+                    .into(),
+            );
 
             let sut = CliClient {
                 bin_path: "boundary".to_string(),
@@ -522,8 +569,11 @@ mod test {
             let result = sut.connect("target_id", port).await;
             match result {
                 Ok(_) => panic!("connect should have failed due to timeout, but it succeeded"),
-                Err(boundary::Error::ConnectTimeoutError { .. }) => {},
-                Err(e) => panic!("connect should fail with ConnectTimeoutError but it failed with {}", e),
+                Err(boundary::Error::ConnectTimeoutError { .. }) => {}
+                Err(e) => panic!(
+                    "connect should fail with ConnectTimeoutError but it failed with {}",
+                    e
+                ),
             }
         }
     }
