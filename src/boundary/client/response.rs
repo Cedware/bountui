@@ -29,6 +29,7 @@ pub struct AuthenticateResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthenticateAttributes {
+    pub id: String,
     pub user_id: String,
     pub token: String,
     pub expiration_time: DateTime<Utc>,

@@ -1,13 +1,50 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Serializable struct containing the cached auth token and associated user id.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// The canonical in-memory representation of a cached auth token.
+/// All fields are guaranteed present — the type system enforces it.
+#[derive(Debug, Clone)]
 pub struct CachedAuth {
     pub token: String,
     pub user_id: String,
+    pub token_id: String,
+    pub expiration_time: DateTime<Utc>,
+}
+
+/// Serializable wire format for persisting to the keyring.
+/// `token_id` and `expiration_time` are optional — both were added after the
+/// initial version and may be missing in entries written by older versions.
+#[derive(Serialize, Deserialize, Debug)]
+struct SerializedCachedAuth {
+    token: String,
+    user_id: String,
     #[serde(default)]
-    pub expiration_time: Option<DateTime<Utc>>,
+    token_id: Option<String>,
+    #[serde(default)]
+    expiration_time: Option<DateTime<Utc>>,
+}
+
+impl SerializedCachedAuth {
+    /// Convert to the canonical `CachedAuth` if all required fields are present.
+    fn into_cached(self) -> Option<CachedAuth> {
+        Some(CachedAuth {
+            token: self.token,
+            user_id: self.user_id,
+            token_id: self.token_id?,
+            expiration_time: self.expiration_time?,
+        })
+    }
+}
+
+impl From<&CachedAuth> for SerializedCachedAuth {
+    fn from(c: &CachedAuth) -> Self {
+        SerializedCachedAuth {
+            token: c.token.clone(),
+            user_id: c.user_id.clone(),
+            token_id: Some(c.token_id.clone()),
+            expiration_time: Some(c.expiration_time),
+        }
+    }
 }
 
 /// Trait for caching Boundary auth tokens.
@@ -21,6 +58,7 @@ pub trait AuthCache: Send + Sync {
         token: &str,
         user_id: &str,
         expiration_time: DateTime<Utc>,
+        token_id: &str,
     ) -> anyhow::Result<()>;
 
     /// Remove the cached credential from the keyring.
@@ -84,15 +122,16 @@ impl KeyringAuthCache {
 impl AuthCache for KeyringAuthCache {
     fn get_cached_token(&self) -> Option<CachedAuth> {
         let password = self.entry.get_password().ok()?;
-        let cached: CachedAuth = serde_json::from_str(&password).ok()?;
-        match cached.expiration_time {
-            Some(exp) if exp > Utc::now() => Some(cached),
+        let serialized: SerializedCachedAuth = serde_json::from_str(&password).ok()?;
+        let cached = serialized.into_cached();
+        match &cached {
+            Some(c) if c.expiration_time > Utc::now() => cached,
             Some(_) => {
                 log::warn!("auth_cache: cached token is expired");
                 None
             }
             None => {
-                log::warn!("auth_cache: cached token has no expiration time, treating as expired");
+                log::warn!("auth_cache: cached entry is incomplete or from an older version");
                 None
             }
         }
@@ -103,13 +142,15 @@ impl AuthCache for KeyringAuthCache {
         token: &str,
         user_id: &str,
         expiration_time: DateTime<Utc>,
+        token_id: &str,
     ) -> anyhow::Result<()> {
         let cached = CachedAuth {
             token: token.to_string(),
             user_id: user_id.to_string(),
-            expiration_time: Some(expiration_time),
+            token_id: token_id.to_string(),
+            expiration_time,
         };
-        let json = serde_json::to_string(&cached)?;
+        let json = serde_json::to_string(&SerializedCachedAuth::from(&cached))?;
         self.entry.set_password(&json)?;
         Ok(())
     }
@@ -134,7 +175,13 @@ impl AuthCache for NoopAuthCache {
         None
     }
 
-    fn cache_token(&self, _token: &str, _user_id: &str, _expiration_time: DateTime<Utc>) -> anyhow::Result<()> {
+    fn cache_token(
+        &self,
+        _token: &str,
+        _user_id: &str,
+        _expiration_time: DateTime<Utc>,
+        _token_id: &str,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -155,7 +202,7 @@ pub(crate) mod tests {
     /// Hand-written mock that allows fine-grained control over the cached token.
     pub struct MockAuthCache {
         cached: std::sync::Mutex<Option<CachedAuth>>,
-        cache_calls: std::sync::Mutex<Vec<(String, String, DateTime<Utc>)>>,
+        cache_calls: std::sync::Mutex<Vec<(String, String, DateTime<Utc>, String)>>,
         available: bool,
     }
 
@@ -164,14 +211,18 @@ pub(crate) mod tests {
         token: Option<&str>,
         user_id: Option<&str>,
         expiration_time: Option<DateTime<Utc>>,
+        token_id: Option<&str>,
         #[builder(default = true)] available: bool,
     ) -> MockAuthCache {
-        let cached = match (token, user_id) {
-            (Some(token), Some(user_id)) => Some(CachedAuth {
-                token: token.to_string(),
-                user_id: user_id.to_string(),
-                expiration_time,
-            }),
+        let cached = match (token, user_id, token_id, expiration_time) {
+            (Some(token), Some(user_id), Some(token_id), Some(expiration_time)) => {
+                Some(CachedAuth {
+                    token: token.to_string(),
+                    user_id: user_id.to_string(),
+                    token_id: token_id.to_string(),
+                    expiration_time,
+                })
+            }
             _ => None,
         };
         MockAuthCache {
@@ -185,7 +236,7 @@ pub(crate) mod tests {
         fn get_cached_token(&self) -> Option<CachedAuth> {
             let cached = self.cached.lock().unwrap().clone()?;
             match cached.expiration_time {
-                Some(exp) if exp > Utc::now() => Some(cached),
+                exp if exp > Utc::now() => Some(cached),
                 _ => None,
             }
         }
@@ -195,11 +246,13 @@ pub(crate) mod tests {
             token: &str,
             user_id: &str,
             expiration_time: DateTime<Utc>,
+            token_id: &str,
         ) -> anyhow::Result<()> {
             self.cache_calls.lock().unwrap().push((
                 token.to_string(),
                 user_id.to_string(),
                 expiration_time,
+                token_id.to_string(),
             ));
             Ok(())
         }

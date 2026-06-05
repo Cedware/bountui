@@ -95,7 +95,7 @@ pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: Remembe
 pub struct BountuiApp<
     C: boundary::ApiClient + Clone + Send + Sync + 'static,
     R: RememberUserInput + Copy,
-    M: ConnectionManager
+    M: ConnectionManager,
 > {
     page: Page<C, R>,
     boundary_client: C,
@@ -119,7 +119,7 @@ impl<C, R: RememberUserInput + Copy, M> BountuiApp<C, R, M>
 where
     C: boundary::ApiClient + Clone + Send + Sync,
     C::ConnectionHandle: Send,
-    M: ConnectionManager
+    M: ConnectionManager,
 {
     pub fn new(
         boundary_client: C,
@@ -131,11 +131,8 @@ where
     ) -> Self {
         let (message_tx, message_rx) = tokio::sync::mpsc::channel(64);
 
-        let (page, user_id) = Self::resolve_initial_page(
-            &auth_cache,
-            &message_tx,
-            &boundary_client,
-        );
+        let (page, user_id) =
+            Self::resolve_initial_page(&auth_cache, &message_tx, &boundary_client);
 
         BountuiApp {
             boundary_client,
@@ -163,6 +160,7 @@ where
         boundary_client: &C,
     ) -> (Page<C, R>, String) {
         if let Some(cached) = auth_cache.get_cached_token() {
+            let token_id = cached.token_id.clone();
             unsafe {
                 std::env::set_var("BOUNDARY_TOKEN", &cached.token);
             }
@@ -171,17 +169,16 @@ where
             let tx = message_tx.clone();
             let auth_response = AuthenticateResponse {
                 attributes: boundary::client::response::AuthenticateAttributes {
+                    id: token_id.clone(),
                     user_id: cached.user_id,
                     token: cached.token,
-                    expiration_time: expiration_time.expect(
-                        "cached token passed expiry check but has no expiration_time",
-                    ),
+                    expiration_time,
                 },
             };
             let client = boundary_client.clone();
             tokio::spawn(async move {
-                match client.get_scopes(None, false).await {
-                    Ok(_) => {
+                match client.validate_token(&token_id).await {
+                    Ok(()) => {
                         log::info!("auth_cache: cached token is valid — restoring session");
                         let _ = tx.send(Message::TokenRestored(auth_response)).await;
                     }
@@ -509,6 +506,7 @@ where
                         &auth_response.attributes.token,
                         &auth_response.attributes.user_id,
                         auth_response.attributes.expiration_time,
+                        &auth_response.attributes.id,
                     ) {
                         log::error!("Failed to cache auth token: {e}");
                     }
