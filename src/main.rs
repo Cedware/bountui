@@ -66,6 +66,7 @@ async fn main() {
         eprintln!("{}", e);
         std::process::exit(1);
     }
+    log::info!("Hello world!");
     let boundary_client = boundary::CliClient::default();
     let connection_manager =
         bountui::connection_manager::DefaultConnectionManager::new(boundary_client.clone());
