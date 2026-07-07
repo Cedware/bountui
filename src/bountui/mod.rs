@@ -9,6 +9,7 @@ use crate::bountui::components::NavigationInput;
 use crate::bountui::connection_manager::ConnectionManager;
 use crate::bountui::loading_page::LoadingPage;
 use crate::bountui::login_page::LoginPage;
+use crate::cross_term::receive_cross_term_events;
 use crate::event_ext::EventExt;
 use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
@@ -104,7 +105,6 @@ pub struct BountuiApp<
     alert: Option<(String, String)>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     message_rx: tokio::sync::mpsc::Receiver<Message>,
-    cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
     user_id: String,
     navigation_input: Option<NavigationInput>,
     tasks: FuturesUnordered<BoxFuture<'static, ()>>,
@@ -125,7 +125,6 @@ where
         boundary_client: C,
         connection_manager: M,
         remember_user_input: R,
-        cross_term_event_rx: tokio::sync::mpsc::Receiver<Event>,
         clipboard: Box<dyn ClipboardAccess>,
         auth_cache: Box<dyn AuthCache>,
     ) -> Self {
@@ -143,7 +142,6 @@ where
             alert: None,
             message_tx: message_tx.clone(),
             message_rx,
-            cross_term_event_rx,
             navigation_input: None,
             tasks: FuturesUnordered::new(),
             remember_user_input,
@@ -547,6 +545,13 @@ where
         let mut terminal = ratatui::init();
         terminal.clear().unwrap();
 
+        // Start reading terminal events only *after* initialization. `clear()`
+        // (and terminal init) issues a DSR cursor-position query and reads the
+        // reply back from stdin; if the background event reader were already
+        // running it would consume that reply, making the query time out with
+        // "The cursor position could not be read within a normal duration".
+        let mut cross_term_event_rx = receive_cross_term_events();
+
         // Perform initial layout
         self.handle_layout(&mut terminal);
 
@@ -562,7 +567,7 @@ where
                         self.handle_message(message).await;
                     }
                 }
-                event = self.cross_term_event_rx.recv() => {
+                event = cross_term_event_rx.recv() => {
                     if let Some(event) = event {
                         if event.is_stop() {
                             let _ = self.connection_manager.shutdown().await
@@ -610,14 +615,12 @@ mod tests {
         connection_manager: M,
         clipboard: Box<dyn ClipboardAccess>,
     ) -> BountuiApp<boundary::MockClient, Option<UserInputsPath<&'static str>>, M> {
-        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
         let mut app = BountuiApp::new(
             make_boundary_client(),
             connection_manager,
             remember_user_input,
-            evt_rx,
             clipboard,
             noop_auth_cache(),
         );
@@ -636,7 +639,6 @@ mod tests {
     #[tokio::test]
     async fn failed_authentication_keeps_login_page_open_and_shows_alert() {
         let connection_manager = MockConnectionManager::new();
-        let (_evt_tx, evt_rx) = tokio::sync::mpsc::channel(1);
         let remember_user_input: Option<UserInputsPath<&'static str>> = None;
 
         let mut app = BountuiApp::new(
@@ -647,7 +649,6 @@ mod tests {
                 .build(),
             connection_manager,
             remember_user_input,
-            evt_rx,
             Box::new(MockClipboardAccess::new()),
             noop_auth_cache(),
         );

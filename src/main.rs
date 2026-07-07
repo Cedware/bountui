@@ -6,7 +6,6 @@ mod util;
 
 use crate::bountui::auth_cache::{AuthCache, KeyringAuthCache, NoopAuthCache};
 use crate::bountui::{BountuiApp, UserInputsPath};
-use crate::cross_term::receive_cross_term_events;
 use crate::util::clipboard::{ArboardClipboard, BrokenClipboard, ClipboardAccess};
 use anyhow::Context;
 use flexi_logger::LoggerHandle;
@@ -81,8 +80,6 @@ async fn main() {
         None
     };
 
-    let cross_term_event_rx = receive_cross_term_events();
-
     let clipboard: Box<dyn ClipboardAccess> = match ArboardClipboard::new() {
         Ok(c) => Box::new(c),
         Err(e) => {
@@ -109,7 +106,6 @@ async fn main() {
         boundary_client,
         connection_manager,
         user_inputs_path,
-        cross_term_event_rx,
         clipboard,
         auth_cache,
     );
