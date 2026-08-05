@@ -1,6 +1,7 @@
 use crate::boundary::client::response::{AuthenticateAttributes, AuthenticateResponse};
 use crate::boundary::{
-    ApiClient, BoundaryConnectionHandle, ConnectResponse, Error, Scope, Session, Target,
+    ApiClient, BoundaryConnectionHandle, ConnectResponse, CredentialEntry, Error, Scope, Session,
+    Target,
 };
 use bon::Builder;
 use chrono::{Duration, Utc};
@@ -31,6 +32,10 @@ pub struct MockClient {
     scopes: HashMap<Option<String>, Vec<Scope>>,
     #[builder(default)]
     targets: HashMap<Option<String>, Vec<Target>>,
+    /// Credentials every `connect` call returns. Empty by default, mirroring targets
+    /// without a credential library.
+    #[builder(default)]
+    credentials: Vec<CredentialEntry>,
     #[builder(default)]
     sessions: Arc<Mutex<HashMap<String, Vec<Session>>>>,
     #[builder(default)]
@@ -136,7 +141,7 @@ impl ApiClient for MockClient {
 
         Ok((
             ConnectResponse {
-                credentials: vec![],
+                credentials: self.credentials.clone(),
                 session_id: session_id.to_string(),
                 expiration: Utc::now() + self.session_lifetime,
             },

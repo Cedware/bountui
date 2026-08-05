@@ -1,10 +1,12 @@
 use crate::boundary;
 use crate::boundary::{ApiClient, ConnectResponse, Scope, Target};
+use crate::bountui::components::credential_dialog::CredentialDialog;
 use crate::bountui::components::input_dialog::{Button, InputDialog, InputField};
 use crate::bountui::components::table::action::Action;
 use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::{ConnectionEstablishedDialog, TablePage, TargetDetailDialog};
+use crate::bountui::connection_manager::TargetConnection;
 use crate::bountui::remember_user_input::RememberUserInput;
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
@@ -12,9 +14,12 @@ use crate::event_ext::EventExt;
 use crate::util::MpscSenderExt;
 use crossterm::event::{Event, KeyCode};
 use futures::FutureExt;
+use log::info;
 use ratatui::layout::Rect;
 use ratatui::prelude::Constraint;
 use ratatui::Frame;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub enum TargetsPageMessage {
@@ -43,7 +48,12 @@ pub struct TargetsPage<C, S: RememberUserInput> {
     table_page: TablePage<boundary::Target>,
     connect_dialog: Option<InputDialog<ConnectDialogFields, ConnectDialogButtons>>,
     connect_result_dialog: Option<ConnectionEstablishedDialog>,
+    credential_dialog: Option<CredentialDialog>,
     detail_dialog: Option<TargetDetailDialog>,
+    /// Snapshot of the active connections, refreshed by `BountuiApp` before every event.
+    /// Shared with the "Show Credentials" action closure, which is built once but has to
+    /// see the current state — hence the interior mutability.
+    connections: Rc<RefCell<HashMap<String, Vec<TargetConnection>>>>,
     message_tx: tokio::sync::mpsc::Sender<Message>,
     boundary_client: C,
     parent_scope: Scope,
@@ -83,6 +93,10 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             ),
         ];
 
+        let connections: Rc<RefCell<HashMap<String, Vec<TargetConnection>>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+
+        let connections_for_action = connections.clone();
         let actions = vec![
             Action::new(
                 "Quit".to_string(),
@@ -109,6 +123,21 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
                 "d".to_string(),
                 Box::new(|item: Option<&Target>| item.is_some()),
             ),
+            Action::new(
+                "Show Credentials".to_string(),
+                "v".to_string(),
+                // Only offered when the target has exactly one connection carrying
+                // credentials — with several, there is nothing to disambiguate them by,
+                // so the sessions page (Shift + C) stays the way to pick one.
+                Box::new(move |item: Option<&Target>| {
+                    item.is_some_and(|target| {
+                        connections_for_action
+                            .borrow()
+                            .get(&target.id)
+                            .is_some_and(|connections| connections.len() == 1)
+                    })
+                }),
+            ),
         ];
 
         let table_page = TablePage::new(
@@ -123,7 +152,9 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             table_page,
             connect_dialog: None,
             connect_result_dialog: None,
+            credential_dialog: None,
             detail_dialog: None,
+            connections,
             message_tx,
             parent_scope,
             boundary_client,
@@ -174,9 +205,48 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
         if let Some(connect_result_dialog) = &self.connect_result_dialog {
             connect_result_dialog.view(frame);
         }
+        if let Some(credential_dialog) = &self.credential_dialog {
+            credential_dialog.view(frame);
+        }
         if let Some(detail_dialog) = &self.detail_dialog {
             detail_dialog.view(frame);
         }
+    }
+
+    /// Replaces the snapshot of active connections. Called by `BountuiApp` before each
+    /// event so that both the footer action and `v` see the current state — connections
+    /// disappear silently in the background when a session expires.
+    pub fn set_connections(&self, connections: HashMap<String, Vec<TargetConnection>>) {
+        *self.connections.borrow_mut() = connections;
+    }
+
+    #[cfg(test)]
+    pub fn connection_count(&self, target_id: &str) -> usize {
+        self.connections
+            .borrow()
+            .get(target_id)
+            .map_or(0, |connections| connections.len())
+    }
+
+    /// Opens the credentials of the selected target's connection, if it has exactly one.
+    fn show_credentials(&mut self) {
+        let Some(target) = self.table_page.selected_item() else {
+            return;
+        };
+        let credentials = {
+            let connections = self.connections.borrow();
+            match connections.get(&target.id) {
+                Some(connections) if connections.len() == 1 => {
+                    info!(
+                        "Showing credentials of session {} for target {}",
+                        connections[0].session_id, target.id
+                    );
+                    connections[0].credentials.clone()
+                }
+                _ => return,
+            }
+        };
+        self.credential_dialog = Some(CredentialDialog::new(credentials, self.message_tx.clone()));
     }
 
     fn close_connect_result_dialog(&mut self) {
@@ -290,6 +360,16 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             return; // Consume the event, don't let TargetsPage handle it further
         }
 
+        // 1b. Handle CredentialDialog if it's open
+        if let Some(dialog) = &mut self.credential_dialog {
+            if event.is_esc() {
+                self.credential_dialog = None;
+                return; // Consume Esc, don't forward
+            }
+            dialog.handle_event(event).await;
+            return;
+        }
+
         // 2. Handle ConnectDialog if it's open
         if let Some(connect_dialog) = &mut self.connect_dialog {
             if event.is_esc() {
@@ -334,6 +414,10 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
                     if self.table_page.selected_item().is_some() {
                         self.show_sessions().await;
                     }
+                }
+                KeyCode::Char('v') => {
+                    // Jump straight to the credentials of the target's existing connection
+                    self.show_credentials();
                 }
                 KeyCode::Char('d') => {
                     // Show target detail overlay if a target is selected
@@ -383,8 +467,9 @@ impl FilterItems<boundary::Target> for TablePage<boundary::Target> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::boundary::{Credential, CredentialEntry, CredentialSource};
     use crate::bountui::remember_user_input::tests::MockRememberUserInput;
-    use std::collections::HashMap;
+    use crossterm::event::KeyEvent;
     use std::sync::Arc;
 
     fn create_parent_scope() -> Scope {
@@ -426,6 +511,53 @@ mod test {
     }
 
 
+    fn target_connection(session_id: &str) -> TargetConnection {
+        TargetConnection {
+            session_id: session_id.to_string(),
+            credentials: vec![CredentialEntry {
+                credential: Credential {
+                    username: format!("user-{session_id}"),
+                    password: "secret".to_string(),
+                },
+                credential_source: CredentialSource {
+                    name: "test-source".to_string(),
+                },
+            }],
+        }
+    }
+
+    fn connections(entries: Vec<TargetConnection>) -> HashMap<String, Vec<TargetConnection>> {
+        HashMap::from([("target-1".to_string(), entries)])
+    }
+
+    async fn create_loaded_targets_page(
+        connections: HashMap<String, Vec<TargetConnection>>,
+    ) -> TargetsPage<Arc<boundary::MockClient>, MockRememberUserInput> {
+        let (msg_tx, _msg_rx) = tokio::sync::mpsc::channel(10);
+        let client = create_boundary_client();
+        let mut page = TargetsPage::new(
+            create_parent_scope(),
+            msg_tx,
+            Arc::new(client),
+            MockRememberUserInput::default(),
+        )
+        .await;
+        page.handle_message(TargetsPageMessage::TargetsLoaded(create_targets()));
+        page.set_connections(connections);
+        page
+    }
+
+    fn show_credentials_action_enabled<C, S: RememberUserInput>(page: &TargetsPage<C, S>) -> bool {
+        let target = create_targets().remove(0);
+        let action = page
+            .table_page
+            .actions
+            .iter()
+            .find(|a| a.name == "Show Credentials")
+            .expect("Show Credentials action should exist");
+        (action.enabled)(Some(&target))
+    }
+
     #[tokio::test]
     async fn test_close_connect_dialog() {
         let (msg_tx, _msg_rx) = tokio::sync::mpsc::channel(10);
@@ -437,5 +569,67 @@ mod test {
         assert!(sut.connect_dialog.is_some(), "Connect dialog should be open");
         sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc))).await; // Press Esc to close
         assert!(sut.connect_dialog.is_none(), "Connect dialog should be closed after pressing Esc");
+    }
+
+    #[tokio::test]
+    async fn show_credentials_opens_dialog_for_single_connection() {
+        let mut sut = create_loaded_targets_page(connections(vec![target_connection("s-1")])).await;
+
+        assert!(
+            show_credentials_action_enabled(&sut),
+            "Show Credentials should be enabled with exactly one connection"
+        );
+
+        sut.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('v'))))
+            .await;
+        assert!(
+            sut.credential_dialog.is_some(),
+            "Credential dialog should be open"
+        );
+
+        sut.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)))
+            .await;
+        assert!(
+            sut.credential_dialog.is_none(),
+            "Credential dialog should be closed after pressing Esc"
+        );
+    }
+
+    #[tokio::test]
+    async fn show_credentials_is_noop_without_connection() {
+        let mut sut = create_loaded_targets_page(HashMap::new()).await;
+
+        assert!(
+            !show_credentials_action_enabled(&sut),
+            "Show Credentials should be disabled without a connection"
+        );
+
+        sut.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('v'))))
+            .await;
+        assert!(
+            sut.credential_dialog.is_none(),
+            "Credential dialog should stay closed without a connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn show_credentials_is_noop_with_multiple_connections() {
+        let mut sut = create_loaded_targets_page(connections(vec![
+            target_connection("s-1"),
+            target_connection("s-2"),
+        ]))
+        .await;
+
+        assert!(
+            !show_credentials_action_enabled(&sut),
+            "Show Credentials should be disabled with more than one connection"
+        );
+
+        sut.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('v'))))
+            .await;
+        assert!(
+            sut.credential_dialog.is_none(),
+            "Credential dialog should stay closed with ambiguous connections"
+        );
     }
 }

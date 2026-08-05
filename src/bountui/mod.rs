@@ -388,6 +388,13 @@ where
             return;
         }
 
+        // Refresh the targets page's view of the active connections before it gets to act
+        // on the event. Connections vanish silently in the background when a session
+        // expires, so anything cached at construction time would go stale.
+        if let Page::Targets(targets_page) = &self.page {
+            targets_page.set_connections(self.connection_manager.connections_by_target());
+        }
+
         match &mut self.page {
             Page::Loading(_) => {}
             Page::Login(_) => {}
@@ -738,6 +745,85 @@ mod tests {
         assert!(
             app.alert.is_some(),
             "Expected error alert on connect failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_event_refreshes_connections_on_targets_page() {
+        let scope = Scope {
+            id: "scope-1".to_string(),
+            name: "scope 1".to_string(),
+            description: "scope 1".to_string(),
+            type_name: "".to_string(),
+            authorized_collection_actions: HashMap::new(),
+        };
+        let target = Target {
+            id: "target-1".to_string(),
+            name: "target 1".to_string(),
+            description: "target 1".to_string(),
+            type_name: "".to_string(),
+            authorized_collection_actions: HashMap::new(),
+            authorized_actions: vec!["authorize-session".to_string()],
+            scope_id: scope.id.clone(),
+            attributes: None,
+        };
+
+        let boundary_client = boundary::MockClient::builder()
+            .user_id("user-1".to_string())
+            .scopes(HashMap::from([(None, vec![scope.clone()])]))
+            .targets(HashMap::from([(Some(scope.id.clone()), vec![target.clone()])]))
+            .credentials(vec![boundary::CredentialEntry {
+                credential: boundary::Credential {
+                    username: "user1".to_string(),
+                    password: "pass1".to_string(),
+                },
+                credential_source: boundary::CredentialSource {
+                    name: "test-source".to_string(),
+                },
+            }])
+            .build();
+
+        let mut app = make_authenticated_app(
+            DefaultConnectionManager::new(boundary_client),
+            Box::new(MockClipboardAccess::new()),
+        )
+        .await;
+
+        app.handle_message(Message::ShowTargets {
+            parent: scope.clone(),
+        })
+        .await;
+        assert!(matches!(app.page, Page::Targets(_)));
+
+        app.handle_message(Message::Connect {
+            target_id: target.id.clone(),
+            port: 8080,
+        })
+        .await;
+
+        let Page::Targets(targets_page) = &app.page else {
+            panic!("Expected targets page");
+        };
+        assert_eq!(
+            targets_page.connection_count(&target.id),
+            0,
+            "The page should not know about the connection before the next event"
+        );
+
+        // Any event triggers the refresh — the page is handed the current connections
+        // before it gets to act on it.
+        app.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Down,
+        )))
+        .await;
+
+        let Page::Targets(targets_page) = &app.page else {
+            panic!("Expected targets page");
+        };
+        assert_eq!(
+            targets_page.connection_count(&target.id),
+            1,
+            "The established connection should be visible to the targets page"
         );
     }
 }

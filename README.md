@@ -96,6 +96,7 @@ bountui provides several keyboard shortcuts for interacting with Boundary resour
 | `⏎`            | Show child elements (conext sensitive)       |
 | `c`            | Connect to the selected target               |
 | `Shift+c`      | Show active sessions for the selected target |
+| `v`            | Show the credentials of the selected target's connection (targets view, only when it has exactly one) or of the selected session (sessions view) |
 | `Ctrl+d`       | Stop the selected session                    |
 | `Ctrl+c`       | Quit bountui                                 |
 | `Esc`          | Go back to the previous view                 |
