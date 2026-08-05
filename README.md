@@ -31,13 +31,7 @@ To install to a different directory, set `BOUNTUI_INSTALL_DIR`:
 curl -fsSL https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.sh | BOUNTUI_INSTALL_DIR=/usr/local/bin sh
 ```
 
-Binaries installed this way can update themselves to the latest release:
-
-```bash
-bountui update
-```
-
-Release builds also check for a newer release automatically on startup and offer
+Release builds check for a newer release automatically on startup and offer
 to install it in a dialog. (The automatic check is skipped for binaries built
 locally from source, which report the static `Cargo.toml` version.)
 

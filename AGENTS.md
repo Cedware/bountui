@@ -45,7 +45,7 @@ cargo test <module_path>::tests
 
 - **`updater.rs`** - Self-update via GitHub releases; holds `current_version()`
   (stamped at build time via the `BOUNTUI_VERSION` env var in CI, since semantic-release does not bump `Cargo.toml`).
-  CLI: `bountui update`. In the TUI, an update check runs on startup and offers
+  Updates always run through the TUI: an update check runs on startup and offers
   new releases via `components/update_dialog.rs` (`UpdateDialog`); it only runs for
   release builds (`updater::is_release_build()`), so local builds stay quiet and
   tests never hit the network. The blocking download runs in

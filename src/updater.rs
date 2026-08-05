@@ -21,6 +21,7 @@ pub fn current_version() -> &'static str {
 ///
 /// Local builds report the static `Cargo.toml` version, so the automatic update
 /// check on startup would prompt on every launch — it only runs for release builds.
+#[cfg(not(test))]
 pub fn is_release_build() -> bool {
     matches!(option_env!("BOUNTUI_VERSION"), Some(version) if !version.is_empty())
 }
@@ -52,6 +53,7 @@ fn release_target() -> Result<&'static str> {
 
 /// Fetch the version of the latest GitHub release that ships an asset for the
 /// given target. Blocks on network IO.
+#[cfg(not(test))]
 fn fetch_latest_version(target: &str) -> Result<String> {
     let releases = ReleaseList::configure()
         .repo_owner(REPO_OWNER)
@@ -70,6 +72,7 @@ fn fetch_latest_version(target: &str) -> Result<String> {
 ///
 /// Returns the version of the newer release, or `None` when bountui is up to
 /// date. Blocks on network IO.
+#[cfg(not(test))]
 pub fn check_for_update() -> Result<Option<String>> {
     let latest = fetch_latest_version(release_target()?)?;
     let current = semver::Version::parse(current_version())
@@ -83,9 +86,8 @@ pub fn check_for_update() -> Result<Option<String>> {
 /// binary. Blocks while downloading; must not be called from within the tokio
 /// runtime (reqwest blocking) — use `tokio::task::spawn_blocking`.
 ///
-/// `show_output` controls progress and status output on stdout; it must be
-/// `false` while the TUI owns the terminal.
-pub fn update_to_version(version: &str, show_output: bool) -> Result<Status> {
+/// Runs silently (no stdout output) because the TUI owns the terminal.
+pub fn update_to_version(version: &str) -> Result<Status> {
     let status = self_update::backends::github::Update::configure()
         .repo_owner(REPO_OWNER)
         .repo_name(REPO_NAME)
@@ -93,19 +95,10 @@ pub fn update_to_version(version: &str, show_output: bool) -> Result<Status> {
         .target(release_target()?)
         .target_version_tag(&format!("v{version}"))
         .current_version(current_version())
-        .show_output(show_output)
-        .show_download_progress(show_output)
+        .show_output(false)
+        .show_download_progress(false)
         .no_confirm(true)
         .build()?
         .update()?;
     Ok(status)
-}
-
-/// Check for a newer release and install it, with progress output for the CLI
-/// (`bountui update`).
-pub fn self_update() -> Result<Status> {
-    match check_for_update()? {
-        Some(version) => update_to_version(&version, true),
-        None => Ok(Status::UpToDate(current_version().to_string())),
-    }
 }

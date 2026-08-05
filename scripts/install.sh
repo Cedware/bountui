@@ -76,4 +76,4 @@ case ":$PATH:" in
         ;;
 esac
 
-echo "Run 'bountui update' to update to future releases."
+echo "bountui will offer future releases in an update dialog on startup."

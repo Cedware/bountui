@@ -597,7 +597,7 @@ where
                 let tx = self.message_tx.clone();
                 tokio::spawn(async move {
                     let result = tokio::task::spawn_blocking(move || {
-                        updater::update_to_version(&version, false)
+                        updater::update_to_version(&version)
                     })
                     .await;
                     let message = match result {

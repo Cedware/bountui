@@ -67,7 +67,6 @@ fn print_usage() {
          \n\
          Usage:\n\
          \x20 bountui              Start the TUI\n\
-         \x20 bountui update       Update bountui to the latest GitHub release\n\
          \x20 bountui --version    Print the version\n\
          \x20 bountui --help       Print this help",
         updater::current_version()
@@ -78,21 +77,6 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None => {}
-        Some("update") | Some("self-update") => {
-            match updater::self_update() {
-                Ok(status) if status.uptodate() => {
-                    println!("bountui is already up to date ({})", status.version());
-                }
-                Ok(status) => {
-                    println!("bountui updated to {}", status.version());
-                }
-                Err(e) => {
-                    eprintln!("Failed to update bountui: {:#}", e);
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
         Some("--version") | Some("-V") => {
             println!("bountui {}", updater::current_version());
             return;
