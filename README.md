@@ -35,6 +35,23 @@ Release builds check for a newer release automatically on startup and offer
 to install it in a dialog. (The automatic check is skipped for binaries built
 locally from source, which report the static `Cargo.toml` version.)
 
+### 🪟 Windows
+
+Run the install script in PowerShell. It downloads the latest release binary from
+[GitHub releases](https://github.com/Cedware/bountui/releases), installs it to `~/.local/bin`
+and adds that directory to your user `PATH`:
+
+```powershell
+irm https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.ps1 | iex
+```
+
+To install to a different directory, set `BOUNTUI_INSTALL_DIR` first:
+
+```powershell
+$env:BOUNTUI_INSTALL_DIR = "C:\tools\bin"
+irm https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.ps1 | iex
+```
+
 ### 🐧 Linux
 
 #### Arch

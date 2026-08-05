@@ -38,7 +38,7 @@ detect_target() {
                 *) error "unsupported architecture: $arch" ;;
             esac
             ;;
-        *) error "unsupported operating system: $os (on Windows, download the release zip manually)" ;;
+        *) error "unsupported operating system: $os (on Windows, use scripts/install.ps1 instead)" ;;
     esac
 }
 
