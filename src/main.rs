@@ -2,6 +2,7 @@ mod boundary;
 mod bountui;
 mod cross_term;
 pub mod event_ext;
+mod updater;
 mod util;
 
 use crate::bountui::auth_cache::{AuthCache, KeyringAuthCache, NoopAuthCache};
@@ -59,12 +60,70 @@ fn init_logger() -> anyhow::Result<LoggerHandle> {
     Ok(handle)
 }
 
-#[tokio::main]
-async fn main() {
+fn print_usage() {
+    println!(
+        "bountui {}\n\
+         A Terminal UI for HashiCorp Boundary\n\
+         \n\
+         Usage:\n\
+         \x20 bountui              Start the TUI\n\
+         \x20 bountui update       Update bountui to the latest GitHub release\n\
+         \x20 bountui --version    Print the version\n\
+         \x20 bountui --help       Print this help",
+        updater::current_version()
+    );
+}
+
+fn main() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("update") | Some("self-update") => {
+            match updater::self_update() {
+                Ok(status) if status.uptodate() => {
+                    println!("bountui is already up to date ({})", status.version());
+                }
+                Ok(status) => {
+                    println!("bountui updated to {}", status.version());
+                }
+                Err(e) => {
+                    eprintln!("Failed to update bountui: {:#}", e);
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        Some("--version") | Some("-V") => {
+            println!("bountui {}", updater::current_version());
+            return;
+        }
+        Some("--help") | Some("-h") => {
+            print_usage();
+            return;
+        }
+        Some(arg) => {
+            eprintln!("Unknown argument: {arg}\n");
+            print_usage();
+            std::process::exit(2);
+        }
+    }
+
     if let Err(e) = init_logger() {
         eprintln!("{}", e);
         std::process::exit(1);
     }
+
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("Failed to create tokio runtime: {}", e);
+            std::process::exit(1);
+        }
+    };
+    runtime.block_on(run_app());
+}
+
+async fn run_app() {
     let boundary_client = boundary::CliClient::default();
     let connection_manager =
         bountui::connection_manager::DefaultConnectionManager::new(boundary_client.clone());

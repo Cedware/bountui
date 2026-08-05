@@ -16,6 +16,31 @@ targets, and sessions, making Boundary management more accessible directly from 
 
 ## 📦 Installation
 
+### ⬇️ GitHub Releases (Linux & MacOS)
+
+The install script downloads the latest release binary from
+[GitHub releases](https://github.com/Cedware/bountui/releases) and installs it to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.sh | sh
+```
+
+To install to a different directory, set `BOUNTUI_INSTALL_DIR`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.sh | BOUNTUI_INSTALL_DIR=/usr/local/bin sh
+```
+
+Binaries installed this way can update themselves to the latest release:
+
+```bash
+bountui update
+```
+
+Release builds also check for a newer release automatically on startup and offer
+to install it in a dialog. (The automatic check is skipped for binaries built
+locally from source, which report the static `Cargo.toml` version.)
+
 ### 🐧 Linux
 
 #### Arch

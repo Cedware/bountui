@@ -6,9 +6,11 @@ pub mod credential_dialog;
 pub mod target_detail_dialog;
 mod navigation_input;
 pub mod toaster;
+mod update_dialog;
 mod util;
 
 pub use table::TablePage;
 pub use connection_result_dialog::ConnectionEstablishedDialog;
 pub use target_detail_dialog::TargetDetailDialog;
 pub use navigation_input::*;
+pub use update_dialog::UpdateDialog;
