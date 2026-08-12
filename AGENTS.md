@@ -48,7 +48,12 @@ cargo test <module_path>::tests
   Updates always run through the TUI: an update check runs on startup and offers
   new releases via `components/update_dialog.rs` (`UpdateDialog`); it only runs for
   release builds (`updater::is_release_build()`), so local builds stay quiet and
-  tests never hit the network. The blocking download runs in
+  tests never hit the network. Package-managed installs stay quiet too —
+  `updater::self_update_enabled()` gates the check and is false when the binary
+  was stamped with `BOUNTUI_PACKAGE_MANAGER` at build time (the AUR `PKGBUILD`
+  sets `BOUNTUI_PACKAGE_MANAGER=pacman`) or when the binary lives in a Homebrew
+  Cellar (detected at runtime via the canonicalized `current_exe()` path, since
+  the brew formula ships the prebuilt stamped binary). The blocking download runs in
   `tokio::task::spawn_blocking` and must stay silent (no stdout output).
 
 - **`util/`** - Utilities (clipboard access)

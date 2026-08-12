@@ -12,8 +12,8 @@ use crate::bountui::loading_page::LoadingPage;
 use crate::bountui::login_page::LoginPage;
 use crate::cross_term::receive_cross_term_events;
 use crate::event_ext::EventExt;
-use crate::util::clipboard::ClipboardAccess;
 use crate::updater;
+use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
@@ -170,12 +170,16 @@ where
 
     /// Checks GitHub for a newer release in the background and offers it via the
     /// update dialog. Only release builds are checked — local builds report the
-    /// static `Cargo.toml` version and would prompt on every start. Failures
-    /// (e.g. offline) are only logged, never shown.
+    /// static `Cargo.toml` version and would prompt on every start. Installs
+    /// owned by a package manager (AUR, Homebrew) are skipped as well — they
+    /// receive updates through their package manager. Failures (e.g. offline)
+    /// are only logged, never shown.
     #[cfg(not(test))]
     fn spawn_update_check(message_tx: &tokio::sync::mpsc::Sender<Message>) {
-        if !updater::is_release_build() {
-            log::debug!("updater: skipping update check for a non-release build");
+        if !updater::self_update_enabled() {
+            log::debug!(
+                "updater: skipping update check (non-release build or package-managed install)"
+            );
             return;
         }
         let tx = message_tx.clone();

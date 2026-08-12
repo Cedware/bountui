@@ -61,6 +61,8 @@ In this example, we will use `yay`, but you can use any AUR helper of your choic
 yay -S bountui
 ```
 
+Updates are delivered through pacman — the built-in self-updater is disabled for this package.
+
 ### 🍎 MacOS
 
 bountui is not yet available in the official Homebrew catalogue, but you can install it from the [cedware tap](https://github.com/Cedware/homebrew-tap):
@@ -71,6 +73,7 @@ brew install bountui
 ```
 
 This formula will automatically install the boundary CLI too, if you don't have it installed already.
+Updates are delivered through Homebrew — the built-in self-updater is disabled for this install method.
 If you want to see bountui in the official Homebrew catalogue, support this project by giving it a star!
 
 ### 🦀 From Source

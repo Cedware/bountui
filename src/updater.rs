@@ -26,6 +26,52 @@ pub fn is_release_build() -> bool {
     matches!(option_env!("BOUNTUI_VERSION"), Some(version) if !version.is_empty())
 }
 
+/// Whether this binary was built by/for a package manager (e.g. the AUR
+/// PKGBUILD stamps `BOUNTUI_PACKAGE_MANAGER=pacman`).
+///
+/// Package managers deliver updates themselves, so self-update must stay out of
+/// their way. Stamping the release version (`BOUNTUI_VERSION`) is still
+/// desired for a correct `--version` output — it no longer implies that the
+/// updater runs.
+#[cfg(not(test))]
+pub fn is_package_manager_build() -> bool {
+    matches!(option_env!("BOUNTUI_PACKAGE_MANAGER"), Some(value) if !value.is_empty())
+}
+
+/// Whether the given path lives in a Homebrew Cellar — i.e. any path
+/// component is `Cellar`, as in `/opt/homebrew/Cellar/bountui/1.0.0/bin/bountui`.
+/// Covers Apple Silicon (`/opt/homebrew`), Intel (`/usr/local`) and Linuxbrew.
+fn is_homebrew_cellar_path(path: &std::path::Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "Cellar")
+}
+
+/// Whether the running binary is managed by Homebrew.
+///
+/// The brew formula installs the prebuilt (stamped) release binary, so a
+/// build-time flag cannot reach it. Instead we detect the install at runtime:
+/// Homebrew links `<prefix>/bin/bountui` into the Cellar, so the canonicalized
+/// executable path points into `Cellar/`.
+#[cfg(not(test))]
+fn installed_via_homebrew() -> bool {
+    std::env::current_exe()
+        .and_then(|exe| exe.canonicalize())
+        .map(|path| is_homebrew_cellar_path(&path))
+        .unwrap_or(false)
+}
+
+/// Whether the automatic update check and self-update may run.
+///
+/// Only release builds are considered (local builds report the static
+/// `Cargo.toml` version and would prompt on every start), and only when the
+/// install is not owned by a package manager: builds stamped with
+/// `BOUNTUI_PACKAGE_MANAGER` (AUR) and Homebrew installs get their updates
+/// through the package manager instead.
+#[cfg(not(test))]
+pub fn self_update_enabled() -> bool {
+    is_release_build() && !is_package_manager_build() && !installed_via_homebrew()
+}
+
 /// The target triple used in the GitHub release asset names
 /// (`bountui-<version>-<target>.zip`).
 ///
@@ -101,4 +147,36 @@ pub fn update_to_version(version: &str) -> Result<Status> {
         .build()?
         .update()?;
     Ok(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn homebrew_cellar_path_is_detected() {
+        assert!(is_homebrew_cellar_path(Path::new(
+            "/opt/homebrew/Cellar/bountui/1.0.0/bin/bountui"
+        )));
+        assert!(is_homebrew_cellar_path(Path::new(
+            "/usr/local/Cellar/bountui/1.0.0/bin/bountui"
+        )));
+        assert!(is_homebrew_cellar_path(Path::new(
+            "/home/linuxbrew/.linuxbrew/Cellar/bountui/1.0.0/bin/bountui"
+        )));
+    }
+
+    #[test]
+    fn non_homebrew_paths_are_not_detected() {
+        assert!(!is_homebrew_cellar_path(Path::new(
+            "/home/user/.local/bin/bountui"
+        )));
+        assert!(!is_homebrew_cellar_path(Path::new("/usr/bin/bountui")));
+        // A symlink location outside the Cellar does not count on its own —
+        // detection relies on the canonicalized path.
+        assert!(!is_homebrew_cellar_path(Path::new(
+            "/opt/homebrew/bin/bountui"
+        )));
+    }
 }
