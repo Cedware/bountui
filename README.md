@@ -16,6 +16,42 @@ targets, and sessions, making Boundary management more accessible directly from 
 
 ## 📦 Installation
 
+### ⬇️ GitHub Releases (Linux & MacOS)
+
+The install script downloads the latest release binary from
+[GitHub releases](https://github.com/Cedware/bountui/releases) and installs it to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.sh | sh
+```
+
+To install to a different directory, set `BOUNTUI_INSTALL_DIR`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.sh | BOUNTUI_INSTALL_DIR=/usr/local/bin sh
+```
+
+Release builds check for a newer release automatically on startup and offer
+to install it in a dialog. (The automatic check is skipped for binaries built
+locally from source, which report the static `Cargo.toml` version.)
+
+### 🪟 Windows
+
+Run the install script in PowerShell. It downloads the latest release binary from
+[GitHub releases](https://github.com/Cedware/bountui/releases), installs it to `~/.local/bin`
+and adds that directory to your user `PATH`:
+
+```powershell
+irm https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.ps1 | iex
+```
+
+To install to a different directory, set `BOUNTUI_INSTALL_DIR` first:
+
+```powershell
+$env:BOUNTUI_INSTALL_DIR = "C:\tools\bin"
+irm https://raw.githubusercontent.com/Cedware/bountui/main/scripts/install.ps1 | iex
+```
+
 ### 🐧 Linux
 
 #### Arch
@@ -24,6 +60,8 @@ In this example, we will use `yay`, but you can use any AUR helper of your choic
 ```bash
 yay -S bountui
 ```
+
+Updates are delivered through pacman — the built-in self-updater is disabled for this package.
 
 ### 🍎 MacOS
 
@@ -35,6 +73,7 @@ brew install bountui
 ```
 
 This formula will automatically install the boundary CLI too, if you don't have it installed already.
+Updates are delivered through Homebrew — the built-in self-updater is disabled for this install method.
 If you want to see bountui in the official Homebrew catalogue, support this project by giving it a star!
 
 ### 🦀 From Source

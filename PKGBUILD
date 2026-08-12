@@ -35,6 +35,11 @@ build(){
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
     export CFLAGS="" CXXFLAGS=""
+    # Stamp the package version for a correct `bountui --version` output and
+    # mark the build as package-managed so the self-updater stays disabled —
+    # updates are delivered by pacman.
+    export BOUNTUI_VERSION="$pkgver"
+    export BOUNTUI_PACKAGE_MANAGER="pacman"
     cargo build --frozen --release --all-features
 }
 

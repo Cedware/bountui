@@ -27,6 +27,7 @@ unicode-width = "0.2.0"
 semver = "1"
 keyring = "4"
 keyring-core = "1"
+self_update = { version = "0.44.0", default-features = false, features = ["reqwest", "rustls", "archive-zip", "compression-zip-deflate"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

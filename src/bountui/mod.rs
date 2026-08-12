@@ -6,11 +6,13 @@ use crate::bountui::components::table::sessions::{
 };
 use crate::bountui::components::table::target::{TargetsPage, TargetsPageMessage};
 use crate::bountui::components::NavigationInput;
+use crate::bountui::components::UpdateDialog;
 use crate::bountui::connection_manager::ConnectionManager;
 use crate::bountui::loading_page::LoadingPage;
 use crate::bountui::login_page::LoginPage;
 use crate::cross_term::receive_cross_term_events;
 use crate::event_ext::EventExt;
+use crate::updater;
 use crate::util::clipboard::ClipboardAccess;
 use crossterm::event::{Event, KeyCode};
 use futures::future::BoxFuture;
@@ -73,6 +75,14 @@ pub enum Message {
     TokenRestored(AuthenticateResponse),
     /// Sent during startup when the cached token failed validation (expired / revoked).
     TokenInvalid,
+    /// Sent by the startup update check when a newer release is available.
+    UpdateAvailable(String),
+    /// Sent by the update dialog when the user confirmed the update.
+    StartUpdate(String),
+    /// Sent by the update dialog when the user closed it.
+    DismissUpdate,
+    /// Result of the update: the installed version, or an error message.
+    UpdateCompleted(Result<String, String>),
 }
 
 impl Message {
@@ -112,6 +122,7 @@ pub struct BountuiApp<
     clipboard: Box<dyn ClipboardAccess>,
     toaster: components::toaster::Toaster,
     auth_cache: Box<dyn AuthCache>,
+    update_dialog: Option<UpdateDialog>,
     frame_count: u64,
 }
 
@@ -133,6 +144,10 @@ where
         let (page, user_id) =
             Self::resolve_initial_page(&auth_cache, &message_tx, &boundary_client);
 
+        // Not in tests: app construction must not hit the network.
+        #[cfg(not(test))]
+        Self::spawn_update_check(&message_tx);
+
         BountuiApp {
             boundary_client,
             user_id,
@@ -148,8 +163,37 @@ where
             clipboard,
             toaster: components::toaster::Toaster::new(message_tx),
             auth_cache,
+            update_dialog: None,
             frame_count: 0,
         }
+    }
+
+    /// Checks GitHub for a newer release in the background and offers it via the
+    /// update dialog. Only release builds are checked — local builds report the
+    /// static `Cargo.toml` version and would prompt on every start. Installs
+    /// owned by a package manager (AUR, Homebrew) are skipped as well — they
+    /// receive updates through their package manager. Failures (e.g. offline)
+    /// are only logged, never shown.
+    #[cfg(not(test))]
+    fn spawn_update_check(message_tx: &tokio::sync::mpsc::Sender<Message>) {
+        if !updater::self_update_enabled() {
+            log::debug!(
+                "updater: skipping update check (non-release build or package-managed install)"
+            );
+            return;
+        }
+        let tx = message_tx.clone();
+        tokio::spawn(async move {
+            match tokio::task::spawn_blocking(updater::check_for_update).await {
+                Ok(Ok(Some(version))) => {
+                    log::info!("updater: new release available: {version}");
+                    let _ = tx.send(Message::UpdateAvailable(version)).await;
+                }
+                Ok(Ok(None)) => log::info!("updater: bountui is up to date"),
+                Ok(Err(e)) => log::warn!("updater: update check failed: {e:#}"),
+                Err(e) => log::warn!("updater: update check task failed: {e}"),
+            }
+        });
     }
 
     fn resolve_initial_page(
@@ -359,9 +403,20 @@ where
 
         // Render toasts overlaying the content at the bottom
         self.toaster.view(frame);
+
+        // The update dialog is modal and stays on top of everything else.
+        if let Some(update_dialog) = &self.update_dialog {
+            update_dialog.view(frame);
+        }
     }
 
     pub async fn handle_event(&mut self, event: &Event) {
+        // The update dialog is modal — it consumes every event while open.
+        if let Some(update_dialog) = &mut self.update_dialog {
+            update_dialog.handle_event(event).await;
+            return;
+        }
+
         if self.alert.is_some() && event.is_enter() {
             self.alert = None
         }
@@ -538,6 +593,35 @@ where
                     self.message_tx.clone(),
                 ));
             }
+            Message::UpdateAvailable(version) => {
+                self.update_dialog =
+                    Some(UpdateDialog::new(version, self.message_tx.clone()));
+            }
+            Message::StartUpdate(version) => {
+                let tx = self.message_tx.clone();
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        updater::update_to_version(&version)
+                    })
+                    .await;
+                    let message = match result {
+                        Ok(Ok(status)) => {
+                            Message::UpdateCompleted(Ok(status.version().to_string()))
+                        }
+                        Ok(Err(e)) => Message::UpdateCompleted(Err(format!("{e:#}"))),
+                        Err(e) => Message::UpdateCompleted(Err(e.to_string())),
+                    };
+                    let _ = tx.send(message).await;
+                });
+            }
+            Message::DismissUpdate => {
+                self.update_dialog = None;
+            }
+            Message::UpdateCompleted(result) => {
+                if let Some(update_dialog) = &mut self.update_dialog {
+                    update_dialog.update_completed(result);
+                }
+            }
         }
     }
 
@@ -673,8 +757,95 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_clipboard_success_clears_alert() {
-        let mut mock_clip = MockClipboardAccess::new();
+    async fn update_dialog_is_rendered_on_top_of_the_page() {
+        let connection_manager = MockConnectionManager::new();
+        let mut app =
+            make_authenticated_app(connection_manager, Box::new(MockClipboardAccess::new())).await;
+
+        app.handle_message(Message::UpdateAvailable("9.9.9".to_string()))
+            .await;
+
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.view(frame)).unwrap();
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            content.contains("Update Available"),
+            "expected the update dialog to be rendered, got:\n{content}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_available_opens_update_dialog() {
+        let connection_manager = MockConnectionManager::new();
+        let mut app = make_authenticated_app(connection_manager, Box::new(MockClipboardAccess::new())).await;
+
+        app.handle_message(Message::UpdateAvailable("9.9.9".to_string()))
+            .await;
+
+        assert!(
+            app.update_dialog.is_some(),
+            "An available update should open the update dialog"
+        );
+    }
+
+    #[tokio::test]
+    async fn dismiss_update_closes_update_dialog() {
+        let connection_manager = MockConnectionManager::new();
+        let mut app = make_authenticated_app(connection_manager, Box::new(MockClipboardAccess::new())).await;
+
+        app.handle_message(Message::UpdateAvailable("9.9.9".to_string()))
+            .await;
+        app.handle_message(Message::DismissUpdate).await;
+
+        assert!(app.update_dialog.is_none());
+    }
+
+    #[tokio::test]
+    async fn esc_dismisses_update_dialog_via_event() {
+        let connection_manager = MockConnectionManager::new();
+        let mut app = make_authenticated_app(connection_manager, Box::new(MockClipboardAccess::new())).await;
+
+        app.handle_message(Message::UpdateAvailable("9.9.9".to_string()))
+            .await;
+        app.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Esc,
+        )))
+        .await;
+        app.process_pending_messages().await;
+
+        assert!(
+            app.update_dialog.is_none(),
+            "Esc should dismiss the update dialog"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_dialog_blocks_events_for_the_page() {
+        let connection_manager = MockConnectionManager::new();
+        let mut app = make_authenticated_app(connection_manager, Box::new(MockClipboardAccess::new())).await;
+
+        app.handle_message(Message::UpdateAvailable("9.9.9".to_string()))
+            .await;
+        app.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Char(':'),
+        )))
+        .await;
+
+        assert!(
+            app.navigation_input.is_none(),
+            "The modal update dialog should swallow events while it is open"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_clipboard_success_clears_alert() {        let mut mock_clip = MockClipboardAccess::new();
         mock_clip
             .expect_set_text()
             .with(eq("hello".to_string()))
