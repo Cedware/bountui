@@ -1,4 +1,5 @@
 mod action;
+pub mod auto_start;
 mod filter;
 pub mod scope;
 pub mod sessions;

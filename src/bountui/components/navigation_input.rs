@@ -1,17 +1,18 @@
+use crate::bountui::Message;
 use crossterm::event::{Event, KeyCode};
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::prelude::{Alignment, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
+use ratatui::Frame;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
-use crate::bountui::Message;
 
 const SCOPE_TREE: &str = "scope-tree";
 const MY_SESSIONS: &str = "my-sessions";
+const AUTO_START_CONNECTIONS: &str = "auto-start-connections";
 
-const OPTIONS: [&'static str; 2] = [SCOPE_TREE, MY_SESSIONS];
+const OPTIONS: [&str; 3] = [SCOPE_TREE, MY_SESSIONS, AUTO_START_CONNECTIONS];
 
 pub struct NavigationInput {
     pub input: Input,
@@ -25,7 +26,7 @@ impl NavigationInput {
         NavigationInput {
             input: Input::default(),
             matching_option: None,
-            message_tx
+            message_tx,
         }
     }
 
@@ -33,7 +34,8 @@ impl NavigationInput {
         if value.is_empty() {
             return None;
         }
-        OPTIONS.iter()
+        OPTIONS
+            .iter()
             .find(|opt| opt.starts_with(value))
             .map(|opt| *opt)
     }
@@ -45,11 +47,23 @@ impl NavigationInput {
     async fn handle_confirm(&self) {
         match self.input.value() {
             SCOPE_TREE => {
-                self.message_tx.send(Message::NavigateToScopeTree).await.unwrap();
-            },
+                self.message_tx
+                    .send(Message::NavigateToScopeTree)
+                    .await
+                    .unwrap();
+            }
             MY_SESSIONS => {
-                self.message_tx.send(Message::NavigateToMySessions).await.unwrap();
-            },
+                self.message_tx
+                    .send(Message::NavigateToMySessions)
+                    .await
+                    .unwrap();
+            }
+            AUTO_START_CONNECTIONS => {
+                self.message_tx
+                    .send(Message::NavigateToAutoStartConnections)
+                    .await
+                    .unwrap();
+            }
             _ => {}
         }
     }
@@ -121,7 +135,6 @@ mod tests {
         })
     }
 
-
     macro_rules! autocomplete_tests {
         ($($name:ident: ($typed:expr, $expected:expr),)*) => {
             $(
@@ -146,5 +159,6 @@ mod tests {
     autocomplete_tests! {
         autocomplete_accepts_scope_tree_on_tab: ("sco", "scope-tree"),
         autocomplete_accepts_my_sessions_on_tab: ("my-", "my-sessions"),
+        autocomplete_accepts_auto_start_connections_on_tab: ("auto-", "auto-start-connections"),
     }
 }

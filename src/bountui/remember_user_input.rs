@@ -5,15 +5,29 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Read;
 use std::path::Path;
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AutoStartConnection {
+    pub target_id: String,
+    pub target_name: String,
+    pub local_port: u16,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct UserInputs {
     local_ports: HashMap<String, u16>,
+    #[serde(default)]
+    auto_start_connections: HashMap<String, AutoStartConnection>,
 }
-
 
 pub trait RememberUserInput {
     fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()>;
     fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>>;
+    fn store_auto_start_connection(
+        &mut self,
+        connection: AutoStartConnection,
+    ) -> anyhow::Result<()>;
+    fn get_auto_start_connections(&self) -> anyhow::Result<Vec<AutoStartConnection>>;
+    fn remove_auto_start_connection(&mut self, target_id: &str) -> anyhow::Result<()>;
 }
 
 fn read_user_inputs<P: AsRef<Path>>(path: P) -> anyhow::Result<UserInputs> {
@@ -76,6 +90,35 @@ where
             .get(target_id)
             .copied())
     }
+
+    fn store_auto_start_connection(
+        &mut self,
+        connection: AutoStartConnection,
+    ) -> anyhow::Result<()> {
+        let mut user_inputs =
+            read_user_inputs(self.0.as_ref()).context("Failed to read user inputs")?;
+        user_inputs
+            .auto_start_connections
+            .insert(connection.target_id.clone(), connection);
+        write_user_inputs(self.0.as_ref(), &user_inputs)
+    }
+
+    fn get_auto_start_connections(&self) -> anyhow::Result<Vec<AutoStartConnection>> {
+        let mut connections: Vec<_> = read_user_inputs(self.0.as_ref())
+            .context("Failed to read user inputs")?
+            .auto_start_connections
+            .into_values()
+            .collect();
+        connections.sort_by(|a, b| a.target_name.cmp(&b.target_name));
+        Ok(connections)
+    }
+
+    fn remove_auto_start_connection(&mut self, target_id: &str) -> anyhow::Result<()> {
+        let mut user_inputs =
+            read_user_inputs(self.0.as_ref()).context("Failed to read user inputs")?;
+        user_inputs.auto_start_connections.remove(target_id);
+        write_user_inputs(self.0.as_ref(), &user_inputs)
+    }
 }
 
 impl<P> RememberUserInput for Option<P>
@@ -97,11 +140,38 @@ where
             Ok(None)
         }
     }
+
+    fn store_auto_start_connection(
+        &mut self,
+        connection: AutoStartConnection,
+    ) -> anyhow::Result<()> {
+        if let Some(inner_self) = self {
+            inner_self.store_auto_start_connection(connection)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_auto_start_connections(&self) -> anyhow::Result<Vec<AutoStartConnection>> {
+        if let Some(inner_self) = self {
+            inner_self.get_auto_start_connections()
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    fn remove_auto_start_connection(&mut self, target_id: &str) -> anyhow::Result<()> {
+        if let Some(inner_self) = self {
+            inner_self.remove_auto_start_connection(target_id)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use crate::bountui::{RememberUserInput, UserInputsPath};
+    use crate::bountui::{AutoStartConnection, RememberUserInput, UserInputsPath};
     use std::collections::HashMap;
     use std::io::Write;
     use std::path::Path;
@@ -110,16 +180,35 @@ pub mod tests {
     #[derive(Default)]
     pub struct MockRememberUserInput {
         ports: HashMap<String, u16>,
+        auto_start_connections: HashMap<String, AutoStartConnection>,
     }
 
     impl RememberUserInput for MockRememberUserInput {
-        fn store_local_port(&mut self, _target: String, _port: u16) -> anyhow::Result<()> {
-            self.ports.insert(_target, _port);
+        fn store_local_port(&mut self, target: String, port: u16) -> anyhow::Result<()> {
+            self.ports.insert(target, port);
             Ok(())
         }
 
-        fn get_local_port(&self, _target_id: &String) -> anyhow::Result<Option<u16>> {
-            Ok(self.ports.get(_target_id).copied())
+        fn get_local_port(&self, target_id: &String) -> anyhow::Result<Option<u16>> {
+            Ok(self.ports.get(target_id).copied())
+        }
+
+        fn store_auto_start_connection(
+            &mut self,
+            connection: AutoStartConnection,
+        ) -> anyhow::Result<()> {
+            self.auto_start_connections
+                .insert(connection.target_id.clone(), connection);
+            Ok(())
+        }
+
+        fn get_auto_start_connections(&self) -> anyhow::Result<Vec<AutoStartConnection>> {
+            Ok(self.auto_start_connections.values().cloned().collect())
+        }
+
+        fn remove_auto_start_connection(&mut self, target_id: &str) -> anyhow::Result<()> {
+            self.auto_start_connections.remove(target_id);
+            Ok(())
         }
     }
 
@@ -164,5 +253,35 @@ pub mod tests {
         let target_id_2_port = path.get_local_port(&"target_id_2".to_string()).unwrap();
         assert_eq!(Some(8080), target_id_1_port);
         assert_eq!(Some(8081), target_id_2_port);
+    }
+
+    #[test]
+    fn stores_updates_and_removes_auto_start_connection() {
+        let file = NamedTempFile::new().unwrap();
+        let mut path = UserInputsPath(file.path());
+        path.store_auto_start_connection(AutoStartConnection {
+            target_id: "target-1".to_string(),
+            target_name: "Target One".to_string(),
+            local_port: 8080,
+        })
+        .unwrap();
+        path.store_auto_start_connection(AutoStartConnection {
+            target_id: "target-1".to_string(),
+            target_name: "Target One".to_string(),
+            local_port: 9090,
+        })
+        .unwrap();
+
+        assert_eq!(
+            path.get_auto_start_connections().unwrap(),
+            vec![AutoStartConnection {
+                target_id: "target-1".to_string(),
+                target_name: "Target One".to_string(),
+                local_port: 9090,
+            }]
+        );
+
+        path.remove_auto_start_connection("target-1").unwrap();
+        assert!(path.get_auto_start_connections().unwrap().is_empty());
     }
 }

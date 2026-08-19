@@ -1,5 +1,6 @@
 use crate::boundary;
 use crate::boundary::{AuthenticateResponse, Scope, Target};
+use crate::bountui::components::table::auto_start::AutoStartConnectionsPage;
 use crate::bountui::components::table::scope::{ScopesPage, ScopesPageMessage};
 use crate::bountui::components::table::sessions::{
     LoadTargetSessionsSessions, LoadUserSessions, SessionsPage, SessionsPageMessage,
@@ -68,6 +69,7 @@ pub enum Message {
     // Navigate root pages
     NavigateToScopeTree,
     NavigateToMySessions,
+    NavigateToAutoStartConnections,
     RunFuture(BoxFuture<'static, ()>),
     Toaster(components::toaster::Message),
     Authenticated(AuthenticateResponse),
@@ -101,6 +103,7 @@ pub enum Page<B: boundary::ApiClient + Clone + Send + Sync + 'static, R: Remembe
     Targets(TargetsPage<B, R>),
     TargetSessions(SessionsPage<LoadTargetSessionsSessions<B>>),
     UserSessions(SessionsPage<LoadUserSessions<B>>),
+    AutoStartConnections(AutoStartConnectionsPage<R>),
 }
 
 pub struct BountuiApp<
@@ -318,6 +321,56 @@ where
         );
     }
 
+    fn navigate_to_auto_start_connections(&mut self) {
+        self.navigation_input = None;
+        match AutoStartConnectionsPage::new(self.remember_user_input, self.message_tx.clone()) {
+            Ok(page) => self.navigate_to(Page::AutoStartConnections(page), true),
+            Err(error) => {
+                self.alert = Some((
+                    "Error".to_string(),
+                    format!("Failed to load auto-start connections: {error}"),
+                ));
+            }
+        }
+    }
+
+    async fn start_auto_start_connections(&mut self) {
+        let connections = match self.remember_user_input.get_auto_start_connections() {
+            Ok(connections) => connections,
+            Err(error) => {
+                self.alert = Some((
+                    "Error".to_string(),
+                    format!("Failed to load auto-start connections: {error}"),
+                ));
+                return;
+            }
+        };
+
+        let mut failures = Vec::new();
+        for connection in connections {
+            if let Err(error) = self
+                .connection_manager
+                .connect(&connection.target_id, connection.local_port)
+                .await
+            {
+                error!(
+                    "Failed to auto-start connection for target {}: {:?}",
+                    connection.target_id, error
+                );
+                failures.push(format!(
+                    "{} ({}): {}",
+                    connection.target_name, connection.target_id, error
+                ));
+            }
+        }
+        if !failures.is_empty() {
+            self.alert = Some((
+                "Auto-Start Connection Error".to_string(),
+                failures.join("\n"),
+            ));
+        }
+    }
+
     fn go_back(&mut self) {
         if let Some(page) = self.history.pop() {
             self.page = page;
@@ -399,6 +452,9 @@ where
             Page::UserSessions(sessions_page) => {
                 sessions_page.view(frame, content_area);
             }
+            Page::AutoStartConnections(auto_start_connections_page) => {
+                auto_start_connections_page.view(frame, content_area);
+            }
         }
 
         // Render toasts overlaying the content at the bottom
@@ -463,6 +519,9 @@ where
             Page::UserSessions(sessions_page) => {
                 sessions_page.handle_event(event).await;
             }
+            Page::AutoStartConnections(auto_start_connections_page) => {
+                auto_start_connections_page.handle_event(event).await;
+            }
         }
     }
 
@@ -522,6 +581,9 @@ where
             Message::NavigateToMySessions => {
                 self.navigate_to_my_sessions().await;
             }
+            Message::NavigateToAutoStartConnections => {
+                self.navigate_to_auto_start_connections();
+            }
             Message::RunFuture(future) => {
                 self.tasks.push(future);
             }
@@ -573,6 +635,7 @@ where
                 }
 
                 self.navigate_to_scope_tree().await;
+                self.start_auto_start_connections().await;
             }
             Message::TokenRestored(auth_response) => {
                 // Token was validated — same setup as a fresh login, but without re-caching.
@@ -581,6 +644,7 @@ where
                 }
                 self.user_id = auth_response.attributes.user_id.clone();
                 self.navigate_to_scope_tree().await;
+                self.start_auto_start_connections().await;
             }
             Message::TokenInvalid => {
                 // Cached token is expired or revoked — clear it and start the login flow.
@@ -725,6 +789,44 @@ mod tests {
         }
 
         app
+    }
+
+    #[tokio::test]
+    async fn starts_every_persisted_auto_start_connection() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut remember_user_input = UserInputsPath(file.path());
+        remember_user_input
+            .store_auto_start_connection(AutoStartConnection {
+                target_id: "target-1".to_string(),
+                target_name: "Target One".to_string(),
+                local_port: 4242,
+            })
+            .unwrap();
+        let mut connection_manager = MockConnectionManager::new();
+        connection_manager
+            .expect_connect()
+            .with(eq("target-1"), eq(4242))
+            .once()
+            .returning(|_, _| {
+                Box::pin(async {
+                    Ok(boundary::ConnectResponse {
+                        credentials: Vec::new(),
+                        session_id: "session-1".to_string(),
+                        expiration: chrono::Utc::now(),
+                    })
+                })
+            });
+        let mut app = BountuiApp::new(
+            make_boundary_client(),
+            connection_manager,
+            remember_user_input,
+            Box::new(MockClipboardAccess::new()),
+            noop_auth_cache(),
+        );
+
+        app.start_auto_start_connections().await;
+
+        assert!(app.alert.is_none());
     }
 
     #[tokio::test]

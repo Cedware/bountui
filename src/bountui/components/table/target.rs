@@ -7,7 +7,7 @@ use crate::bountui::components::table::util::format_title_with_parent;
 use crate::bountui::components::table::{FilterItems, SortItems, TableColumn};
 use crate::bountui::components::{ConnectionEstablishedDialog, TablePage, TargetDetailDialog};
 use crate::bountui::connection_manager::TargetConnection;
-use crate::bountui::remember_user_input::RememberUserInput;
+use crate::bountui::remember_user_input::{AutoStartConnection, RememberUserInput};
 use crate::bountui::Message;
 use crate::bountui::Message::GoBack;
 use crate::event_ext::EventExt;
@@ -41,6 +41,7 @@ pub enum ConnectDialogFields {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ConnectDialogButtons {
     Cancel,
+    AutoStart,
     Ok,
 }
 
@@ -279,6 +280,7 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             )],
             vec![
                 Button::new(ConnectDialogButtons::Cancel, "Cancel"),
+                Button::new(ConnectDialogButtons::AutoStart, "Auto Start"),
                 Button::new(ConnectDialogButtons::Ok, "Ok"),
             ],
         ));
@@ -323,6 +325,51 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
             let _ = self
                 .remember_user_input
                 .store_local_port(target.id.clone(), port);
+        }
+    }
+
+    async fn store_auto_start_connection(&mut self) {
+        let Some(target) = self.table_page.selected_item() else {
+            return;
+        };
+        let port = self
+            .connect_dialog
+            .as_ref()
+            .and_then(|dialog| dialog.get_value(ConnectDialogFields::ListenPort))
+            .and_then(|value| value.parse::<u16>().ok());
+        let Some(port) = port else {
+            self.message_tx
+                .send(Message::ShowAlert(
+                    "Invalid Port".to_string(),
+                    "Listen Port must be a number between 1 and 65535.".to_string(),
+                ))
+                .await
+                .unwrap();
+            return;
+        };
+
+        let connection = AutoStartConnection {
+            target_id: target.id.clone(),
+            target_name: target.name.clone(),
+            local_port: port,
+        };
+        match self
+            .remember_user_input
+            .store_auto_start_connection(connection)
+        {
+            Ok(()) => {
+                self.store_selected_port(port);
+                self.connect_dialog = None;
+            }
+            Err(error) => {
+                self.message_tx
+                    .send(Message::show_error(
+                        "Failed to save auto-start connection",
+                        error,
+                    ))
+                    .await
+                    .unwrap();
+            }
         }
     }
 
@@ -380,6 +427,10 @@ impl<C, S: RememberUserInput> TargetsPage<C, S> {
                 Some(ConnectDialogButtons::Cancel) => {
                     self.close_connect_dialog();
                     return; // Consume event
+                }
+                Some(ConnectDialogButtons::AutoStart) => {
+                    self.store_auto_start_connection().await;
+                    return;
                 }
                 Some(ConnectDialogButtons::Ok) => {
                     self.connect_to_target().await;
@@ -565,10 +616,42 @@ mod test {
         let remember_user_input = MockRememberUserInput::default();
         let mut sut = TargetsPage::new(create_parent_scope(), msg_tx, Arc::new(client), remember_user_input).await;
         sut.handle_message(TargetsPageMessage::TargetsLoaded(create_targets()));
-        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('c')))).await; // Open connect dialog
-        assert!(sut.connect_dialog.is_some(), "Connect dialog should be open");
-        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc))).await; // Press Esc to close
-        assert!(sut.connect_dialog.is_none(), "Connect dialog should be closed after pressing Esc");
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Char('c'),
+        )))
+        .await; // Open connect dialog
+        assert!(
+            sut.connect_dialog.is_some(),
+            "Connect dialog should be open"
+        );
+        sut.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc)))
+            .await; // Press Esc to close
+        assert!(
+            sut.connect_dialog.is_none(),
+            "Connect dialog should be closed after pressing Esc"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_start_button_stores_the_connect_dialog_configuration() {
+        let mut sut = create_loaded_targets_page(HashMap::new()).await;
+        sut.open_connect_dialog();
+        sut.connect_dialog.as_mut().unwrap().fields[0].value =
+            tui_input::Input::new("4242".to_string());
+
+        sut.store_auto_start_connection().await;
+
+        assert_eq!(
+            sut.remember_user_input
+                .get_auto_start_connections()
+                .unwrap(),
+            vec![AutoStartConnection {
+                target_id: "target-1".to_string(),
+                target_name: "target 1".to_string(),
+                local_port: 4242,
+            }]
+        );
+        assert!(sut.connect_dialog.is_none());
     }
 
     #[tokio::test]
