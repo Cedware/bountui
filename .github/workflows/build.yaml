@@ -22,15 +22,16 @@ jobs:
       new_release_version: ${{ steps.get_version.outputs.new_release_version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4.1.0
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20.9.0
+          node-version: 24
       - name: Npm install
-        run: npm install
+        run: npm ci
       - name: Get Version
         id: get_version
-        uses: cycjimmy/semantic-release-action@v4
+        uses: cycjimmy/semantic-release-action@v6
         with:
+          semantic_version: 25
           dry_run: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -91,11 +92,11 @@ jobs:
       new_release_version: ${{ needs.version.outputs.new_release_version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4.1.0
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20.9.0
+          node-version: 24
       - name: Npm install
-        run: npm install
+        run: npm ci
       - name: Download all artifacts
         id: download_artifacts
         uses: actions/download-artifact@v4
@@ -110,7 +111,9 @@ jobs:
           done
       - name: Semantic Release
         id: semantic_release
-        uses: cycjimmy/semantic-release-action@v4
+        uses: cycjimmy/semantic-release-action@v6
+        with:
+          semantic_version: 25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   publish_aur:
